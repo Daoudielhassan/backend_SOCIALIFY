@@ -1,0 +1,62 @@
+# Gitattributes pour optimiser le comportement de Git avec Python
+
+# Fichiers Python
+*.py text eol=lf
+
+# Fichiers de configuration
+*.ini text eol=lf
+*.cfg text eol=lf
+*.conf text eol=lf
+*.toml text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+
+# Fichiers de documentation
+*.md text eol=lf
+*.txt text eol=lf
+*.rst text eol=lf
+
+# Fichiers JSON
+*.json text eol=lf
+
+# Fichiers SQL
+*.sql text eol=lf
+
+# Variables d'environnement
+.env* text eol=lf
+
+# Fichiers de logs (optionnel, traités comme binaire pour éviter les diffs)
+*.log binary
+
+# Fichiers de base de données (binaires)
+*.db binary
+*.sqlite binary
+*.sqlite3 binary
+
+# Certificats et clés (binaires pour sécurité)
+*.pem binary
+*.key binary
+*.crt binary
+*.p12 binary
+
+# Archives (binaires)
+*.zip binary
+*.tar.gz binary
+*.tar binary
+
+# Images (binaires)
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.svg text eol=lf
+
+# Export-ignore pour les fichiers de développement
+.gitignore export-ignore
+.gitattributes export-ignore
+README.md export-ignore
+/tests/ export-ignore
+/docs/ export-ignore
+clean_project.py export-ignore
+test_*.py export-ignore
