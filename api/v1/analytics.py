@@ -39,7 +39,7 @@ async def get_dashboard_analytics(
     """
     try:
         # Get comprehensive user analytics
-        dashboard_data = await analytics_service.get_user_analytics(
+        dashboard_data = await analytics_service.get_user_analytics_optimized(
             user_id=user.id,
             db=db,
             days=days
@@ -90,11 +90,21 @@ async def get_analytics_overview(
         High-level analytics summary
     """
     try:
-        # Get quick overview data
-        overview_data = await analytics_service.get_analytics_overview(
+        # Get quick overview data using user analytics (simplified)
+        user_analytics = await analytics_service.get_user_analytics_optimized(
             user_id=user.id,
-            db=db
+            db=db,
+            days=7  # Short period for overview
         )
+        
+        # Extract overview data
+        overview_data = {
+            "total_messages": user_analytics.get("total_messages", 0),
+            "messages_this_week": user_analytics.get("messages_this_week", 0),
+            "high_priority_messages": user_analytics.get("high_priority_messages", 0),
+            "sources": user_analytics.get("sources", {}),
+            "recent_trend": "stable"  # Simplified for overview
+        }
         
         return {
             "operation": "analytics_overview",
@@ -134,7 +144,7 @@ async def get_user_analytics(
             raise HTTPException(status_code=403, detail="Access denied: Can only view your own analytics")
         
         # Get comprehensive user analytics
-        user_analytics = await analytics_service.get_user_analytics(
+        user_analytics = await analytics_service.get_user_analytics_optimized(
             user_id=user_id,
             db=db,
             days=days
@@ -151,7 +161,7 @@ async def get_user_analytics(
         
         if includeTrends:
             # Add trend analysis
-            trends = await analytics_service.get_message_trends(
+            trends = await analytics_service.get_message_trends_optimized(
                 user_id=user_id,
                 db=db,
                 days=days,

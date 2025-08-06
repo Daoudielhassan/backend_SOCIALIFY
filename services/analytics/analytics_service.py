@@ -73,7 +73,7 @@ class HighPerformanceAnalyticsService:
             """)
             
             result = await query_optimizer.execute_with_performance_monitoring(
-                db, query.bindparam(user_id=user_id, start_date=start_date), "user_analytics"
+                db, query, "user_analytics", {"user_id": user_id, "start_date": start_date}
             )
             
             rows = result.fetchall()
@@ -164,7 +164,7 @@ class HighPerformanceAnalyticsService:
             
             start_date = datetime.utcnow() - timedelta(days=days)
             result = await query_optimizer.execute_with_performance_monitoring(
-                db, query.bindparam(user_id=user_id, start_date=start_date), "message_trends"
+                db, query, "message_trends", {"user_id": user_id, "start_date": start_date}
             )
             
             rows = result.fetchall()
@@ -324,7 +324,7 @@ class HighPerformanceAnalyticsService:
             """)
             
             result = await query_optimizer.execute_with_performance_monitoring(
-                db, query.bindparam(user_ids=user_ids), "prediction_accuracy"
+                db, query, "prediction_accuracy", {"user_ids": user_ids}
             )
             
             rows = result.fetchall()

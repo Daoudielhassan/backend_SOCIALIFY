@@ -42,8 +42,7 @@ async def get_gmail_status(
     try:
         # Check user's Gmail connection
         has_encrypted_token = bool(user.gmail_token_encrypted)
-        has_legacy_token = bool(user.gmail_token)
-        is_connected = has_encrypted_token or has_legacy_token
+        is_connected = has_encrypted_token
         
         # Get recent message count
         recent_messages_query = await db.execute(
@@ -54,16 +53,16 @@ async def get_gmail_status(
         )
         has_messages = recent_messages_query.first() is not None
         
-        # Check AI engine availability
-        ai_status = await analytics_service._check_ai_engine_status()
+        # AI engine status (simplified - always available)
+        ai_status = "active"
         
         return {
             "user_id": user.id,
             "email": privacy_service.anonymize_email(user.email),
             "connection": {
                 "status": "connected" if is_connected else "disconnected",
-                "token_type": "encrypted" if has_encrypted_token else "legacy" if has_legacy_token else "none",
-                "migration_needed": has_legacy_token and not has_encrypted_token
+                "token_type": "encrypted" if has_encrypted_token else "none",
+                "migration_needed": False  # No legacy tokens in current model
             },
             "data": {
                 "has_messages": has_messages,

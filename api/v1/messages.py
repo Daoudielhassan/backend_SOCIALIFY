@@ -137,6 +137,78 @@ async def list_messages(
         logger.error(f"Error listing messages: {str(e)}")
         raise ServerError("Failed to list messages")
 
+@router.get("/processed")
+async def get_processed_messages(
+    limit: int = Query(default=20, ge=1, le=100, description="Number of messages to return"),
+    offset: int = Query(default=0, ge=0, description="Number of messages to skip"),
+    db: AsyncSession = Depends(get_db),
+    user = Depends(get_current_user)
+):
+    """
+    Get processed messages for the current user
+    
+    Args:
+        limit: Number of messages to return (1-100)
+        offset: Number of messages to skip for pagination
+        db: Database session
+        user: Current authenticated user
+        
+    Returns:
+        List of processed messages with metadata
+    """
+    try:
+        # Query processed messages (ones with predictions)
+        query = select(MessageMetadata).where(
+            and_(
+                MessageMetadata.user_id == user.id,
+                MessageMetadata.predicted_priority.isnot(None)
+            )
+        ).order_by(desc(MessageMetadata.processed_at)).limit(limit).offset(offset)
+        
+        result = await db.execute(query)
+        messages = result.scalars().all()
+        
+        # Format messages
+        message_list = []
+        for msg in messages:
+            message_list.append({
+                "id": msg.id,
+                "source": msg.source,
+                "sender_domain": msg.sender_domain,
+                "subject_preview": msg.subject_preview,
+                "predicted_priority": msg.predicted_priority,
+                "predicted_context": msg.predicted_context,
+                "prediction_confidence": msg.prediction_confidence,
+                "created_at": msg.created_at.isoformat() if msg.created_at else None,
+                "processed_at": msg.processed_at.isoformat() if msg.processed_at else None,
+                "received_at": msg.received_at.isoformat() if msg.received_at else None,
+            })
+        
+        # Get total count for pagination
+        count_query = select(func.count(MessageMetadata.id)).where(
+            and_(
+                MessageMetadata.user_id == user.id,
+                MessageMetadata.predicted_priority.isnot(None)
+            )
+        )
+        count_result = await db.execute(count_query)
+        total_count = count_result.scalar() or 0
+        
+        return {
+            "messages": message_list,
+            "pagination": {
+                "limit": limit,
+                "offset": offset,
+                "total": total_count,
+                "has_next": offset + limit < total_count
+            },
+            "api_version": "v1"
+        }
+        
+    except Exception as e:
+        logger.error(f"Error fetching processed messages: {str(e)}")
+        raise ServerError("Failed to fetch processed messages")
+
 @router.get("/{message_id}")
 async def get_message(
     message_id: int,
@@ -440,75 +512,3 @@ async def submit_message_feedback(
     except Exception as e:
         logger.error(f"Error submitting feedback for message {message_id}: {str(e)}")
         raise ServerError("Failed to submit feedback")
-
-@router.get("/processed")
-async def get_processed_messages(
-    limit: int = Query(default=20, ge=1, le=100, description="Number of messages to return"),
-    offset: int = Query(default=0, ge=0, description="Number of messages to skip"),
-    db: AsyncSession = Depends(get_db),
-    user = Depends(get_current_user)
-):
-    """
-    Get processed messages for the current user
-    
-    Args:
-        limit: Number of messages to return (1-100)
-        offset: Number of messages to skip for pagination
-        db: Database session
-        user: Current authenticated user
-        
-    Returns:
-        List of processed messages with metadata
-    """
-    try:
-        # Query processed messages (ones with predictions)
-        query = select(MessageMetadata).where(
-            and_(
-                MessageMetadata.user_id == user.id,
-                MessageMetadata.predicted_priority.isnot(None)
-            )
-        ).order_by(desc(MessageMetadata.processed_at)).limit(limit).offset(offset)
-        
-        result = await db.execute(query)
-        messages = result.scalars().all()
-        
-        # Format messages
-        message_list = []
-        for msg in messages:
-            message_list.append({
-                "id": msg.id,
-                "source": msg.source,
-                "sender_domain": msg.sender_domain,
-                "subject_preview": msg.subject_preview,
-                "predicted_priority": msg.predicted_priority,
-                "predicted_context": msg.predicted_context,
-                "prediction_confidence": msg.prediction_confidence,
-                "created_at": msg.created_at.isoformat() if msg.created_at else None,
-                "processed_at": msg.processed_at.isoformat() if msg.processed_at else None,
-                "received_at": msg.received_at.isoformat() if msg.received_at else None,
-            })
-        
-        # Get total count for pagination
-        count_query = select(func.count(MessageMetadata.id)).where(
-            and_(
-                MessageMetadata.user_id == user.id,
-                MessageMetadata.predicted_priority.isnot(None)
-            )
-        )
-        count_result = await db.execute(count_query)
-        total_count = count_result.scalar() or 0
-        
-        return {
-            "messages": message_list,
-            "pagination": {
-                "limit": limit,
-                "offset": offset,
-                "total": total_count,
-                "has_next": offset + limit < total_count
-            },
-            "api_version": "v1"
-        }
-        
-    except Exception as e:
-        logger.error(f"Error fetching processed messages: {str(e)}")
-        raise ServerError("Failed to fetch processed messages")

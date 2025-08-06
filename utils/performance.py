@@ -457,7 +457,8 @@ class QueryOptimizer:
     async def execute_with_performance_monitoring(
         db: AsyncSession,
         query,
-        query_name: str = "unknown"
+        query_name: str = "unknown",
+        parameters: Optional[Dict[str, Any]] = None
     ) -> Any:
         """
         Execute query with performance monitoring
@@ -465,7 +466,10 @@ class QueryOptimizer:
         start_time = time.time()
         
         try:
-            result = await db.execute(query)
+            if parameters:
+                result = await db.execute(query, parameters)
+            else:
+                result = await db.execute(query)
             execution_time = time.time() - start_time
             
             if execution_time > 1.0:  # Log slow queries
