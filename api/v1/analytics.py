@@ -108,6 +108,65 @@ async def get_analytics_overview(
         logger.error(f"Error getting analytics overview: {str(e)}")
         raise ServerError("Failed to get analytics overview")
 
+@router.get("/user/{user_id}")
+async def get_user_analytics(
+    user_id: int,
+    days: int = Query(default=30, ge=1, le=365, description="Number of days to analyze"),
+    includeTrends: bool = Query(default=True, description="Include trend analysis"),
+    db: AsyncSession = Depends(get_db),
+    current_user = Depends(get_current_user)
+):
+    """
+    Get analytics for a specific user (admin only or current user)
+    
+    Args:
+        user_id: User ID to get analytics for
+        days: Number of days to analyze
+        includeTrends: Whether to include trend analysis
+        
+    Returns:
+        User-specific analytics data
+    """
+    try:
+        # Security: Only allow access to own data unless admin
+        # For now, we'll restrict to current user only
+        if user_id != current_user.id:
+            raise HTTPException(status_code=403, detail="Access denied: Can only view your own analytics")
+        
+        # Get comprehensive user analytics
+        user_analytics = await analytics_service.get_user_analytics(
+            user_id=user_id,
+            db=db,
+            days=days
+        )
+        
+        result = {
+            "operation": "user_analytics",
+            "user_id": user_id,
+            "period_days": days,
+            "analytics": user_analytics,
+            "privacy_protected": True,
+            "api_version": "v1"
+        }
+        
+        if includeTrends:
+            # Add trend analysis
+            trends = await analytics_service.get_message_trends(
+                user_id=user_id,
+                db=db,
+                days=days,
+                granularity="daily"
+            )
+            result["trends"] = trends
+        
+        return result
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting user analytics for user {user_id}: {str(e)}")
+        raise ServerError("Failed to get user analytics")
+
 # =============================================================================
 # Message Analytics
 # =============================================================================

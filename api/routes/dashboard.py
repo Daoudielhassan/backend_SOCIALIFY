@@ -104,7 +104,7 @@ async def get_dashboard_stats(
     
     # Recent activity (last 5 messages)
     recent_messages_result = await db.execute(
-        select(Message).where(
+        select(MessageMetadata).where(
             MessageMetadata.user_id == user.id
         ).order_by(MessageMetadata.created_at.desc()).limit(5)
     )

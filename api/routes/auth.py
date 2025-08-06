@@ -4,7 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update
 from db.models import User
 from db.schemas import UserCreate, Token
-from api.dependencies import get_db
+from api.dependencies import get_db, get_current_user
 from passlib.context import CryptContext
 from jose import jwt
 from datetime import datetime, timedelta
@@ -92,6 +92,14 @@ async def login(user_in: UserCreate, db: AsyncSession = Depends(get_db)):
     user_email = getattr(user, 'email')
     access_token = create_access_token({"sub": str(user_id), "email": user_email})
     return {"access_token": access_token, "token_type": "bearer"}
+
+@router.get("/google")
+async def google_oauth_redirect(user_id: Optional[str] = None):
+    """
+    GET endpoint for /auth/google - redirects to OAuth initialization
+    This handles cases where someone tries to access /auth/google with GET method
+    """
+    return await gmail_oauth_init(user_id)
 
 @router.post("/google", response_model=Token)
 async def google_login(request: Request, db: AsyncSession = Depends(get_db)):
@@ -322,4 +330,28 @@ async def gmail_connection_status(user_id: int, db: AsyncSession = Depends(get_d
             "email": user.email
         }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to check Gmail status: {str(e)}") 
+        raise HTTPException(status_code=500, detail=f"Failed to check Gmail status: {str(e)}")
+
+@router.get("/profile")
+async def get_user_profile(
+    current_user = Depends(get_current_user)
+):
+    """
+    Get the current user's profile information
+    
+    Returns:
+        User profile data
+    """
+    try:
+        return {
+            "id": current_user.id,
+            "email": current_user.email,
+            "full_name": current_user.full_name,
+            "auth_method": current_user.auth_method,
+            "created_at": current_user.created_at.isoformat() if current_user.created_at else None,
+            "last_login": current_user.last_login.isoformat() if current_user.last_login else None,
+            "is_active": current_user.is_active,
+            "gmail_connected": current_user.gmail_token_encrypted is not None
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get profile: {str(e)}")

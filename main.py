@@ -62,6 +62,24 @@ from api.routes import feedback, dashboard
 app.include_router(feedback.router, prefix="/feedback", tags=["feedback"])
 app.include_router(dashboard.router, prefix="/dashboard", tags=["dashboard"])
 
+# Legacy redirects for backward compatibility
+from fastapi.responses import RedirectResponse
+
+@app.get("/analytics")
+async def legacy_analytics_redirect():
+    """Redirect legacy /analytics to v1 analytics dashboard"""
+    return RedirectResponse(url="/api/v1/analytics/dashboard", status_code=301)
+
+@app.get("/analytics/user/{user_id}")
+async def legacy_analytics_user_redirect(user_id: int, days: int = 30, includeTrends: bool = True):
+    """Redirect legacy /analytics/user/{user_id} to v1 analytics user endpoint"""
+    return RedirectResponse(url=f"/api/v1/analytics/user/{user_id}?days={days}&includeTrends={includeTrends}", status_code=301)
+
+@app.get("/messages/processed")
+async def legacy_messages_processed_redirect():
+    """Redirect legacy /messages/processed to v1 messages processed"""
+    return RedirectResponse(url="/api/v1/messages/processed", status_code=301)
+
 @app.get("/api/health")
 @app.get("/health")  # Consolidated endpoint
 async def unified_health_check():
