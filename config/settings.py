@@ -136,6 +136,8 @@ def get_settings() -> Settings:
     settings.validate_required_settings()
     return settings
 
+REDIS_URL = "redis://localhost:6379/0"
+
 # Convenience instance for direct import
 settings = get_settings()
 

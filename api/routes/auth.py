@@ -40,8 +40,7 @@ if not _secret_key:
     raise ValueError("JWT_SECRET environment variable is required")
 SECRET_KEY: str = _secret_key
 ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
-# Augmenter la durée d'expiration par défaut à 7 jours (168 heures)
-ACCESS_TOKEN_EXPIRE_HOURS = int(os.getenv("JWT_EXPIRE_HOURS", 168))  # 7 jours par défaut
+ACCESS_TOKEN_EXPIRE_HOURS = int(os.getenv("JWT_EXPIRE_HOURS", 24))
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
 PASSWORD_SALT = os.getenv("PASSWORD_SALT", "default_salt")
 
@@ -64,27 +63,9 @@ def get_password_hash(password: str) -> str:
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     to_encode = data.copy()
-    
-    # Si aucune durée n'est spécifiée, utiliser la configuration par défaut
-    if expires_delta:
-        expire = datetime.utcnow() + expires_delta
-    else:
-        expire = datetime.utcnow() + timedelta(hours=ACCESS_TOKEN_EXPIRE_HOURS)
-    
-    to_encode.update({
-        "exp": expire,
-        "iat": datetime.utcnow(),  # Issued at (moment de création)
-        "type": "access_token"     # Type de token
-    })
-    
-    logger.info(f"🔐 Creating JWT token that expires at: {expire.isoformat()} (in {ACCESS_TOKEN_EXPIRE_HOURS} hours)")
-    
+    expire = datetime.utcnow() + (expires_delta or timedelta(hours=ACCESS_TOKEN_EXPIRE_HOURS))
+    to_encode.update({"exp": expire})
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
-
-def create_long_lived_token(data: dict, days: int = 30):
-    """Create a long-lived token for extended sessions"""
-    expires_delta = timedelta(days=days)
-    return create_access_token(data, expires_delta)
 
 @router.post("/login", response_model=Token)
 async def login(user_in: UserCreate, db: AsyncSession = Depends(get_db)):
@@ -374,55 +355,3 @@ async def get_user_profile(
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to get profile: {str(e)}")
-
-@router.post("/refresh-token", response_model=Token)
-async def refresh_access_token(
-    current_user = Depends(get_current_user)
-):
-    """
-    Renouveler le token d'accès pour l'utilisateur actuel
-    
-    Returns:
-        Nouveau token d'accès avec une durée d'expiration étendue
-    """
-    try:
-        # Créer un nouveau token avec la durée complète
-        new_access_token = create_access_token({
-            "sub": str(current_user.id), 
-            "email": current_user.email
-        })
-        
-        logger.info(f"🔄 Token refreshed for user {current_user.id}")
-        
-        return {
-            "access_token": new_access_token, 
-            "token_type": "bearer"
-        }
-    except Exception as e:
-        logger.error(f"Error refreshing token: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Failed to refresh token: {str(e)}")
-
-@router.get("/token-info")
-async def get_token_info(
-    current_user = Depends(get_current_user)
-):
-    """
-    Obtenir des informations sur le token actuel
-    
-    Returns:
-        Informations sur le token (expiration, durée restante, etc.)
-    """
-    try:
-        # Cette fonction sera appelée seulement si le token est valide
-        # car elle dépend de get_current_user
-        
-        return {
-            "user_id": current_user.id,
-            "email": current_user.email,
-            "token_valid": True,
-            "message": "Token is valid and user is authenticated",
-            "expires_in_hours": ACCESS_TOKEN_EXPIRE_HOURS,
-            "auth_method": current_user.auth_method
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to get token info: {str(e)}")
