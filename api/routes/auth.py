@@ -16,7 +16,7 @@ from dotenv import load_dotenv
 from utils.logger import logger
 
 # Gmail OAuth imports - Import lazily to avoid circular dependencies
-# from services.email.gmail_oauth import gmail_oauth_service
+#         from services.email_services.gmail_oauth import gmail_oauth_service
 
 router = APIRouter()
 load_dotenv()
@@ -65,7 +65,15 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     to_encode = data.copy()
     expire = datetime.utcnow() + (expires_delta or timedelta(hours=ACCESS_TOKEN_EXPIRE_HOURS))
     to_encode.update({"exp": expire})
-    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+    token = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+    
+    # Debug: Print token for testing (remove in production)
+    print(f"🔑 DEBUG - Generated JWT Token: {token}")
+    print(f"🔑 DEBUG - Token payload: {data}")
+    print(f"🔑 DEBUG - Token expires: {expire.isoformat()}")
+    logger.info(f"🔑 Generated JWT token for user: {data.get('email', 'unknown')}")
+    
+    return token
 
 @router.post("/login", response_model=Token)
 async def login(user_in: UserCreate, db: AsyncSession = Depends(get_db)):
@@ -90,7 +98,9 @@ async def login(user_in: UserCreate, db: AsyncSession = Depends(get_db)):
     await db.commit()
     
     user_email = getattr(user, 'email')
+    print(f"🔐 DEBUG - Creating token for user ID: {user_id}, Email: {user_email}")
     access_token = create_access_token({"sub": str(user_id), "email": user_email})
+    print(f"🔐 DEBUG - Login successful for: {user_email}")
     return {"access_token": access_token, "token_type": "bearer"}
 
 @router.get("/google")
@@ -151,7 +161,9 @@ async def google_login(request: Request, db: AsyncSession = Depends(get_db)):
     
     user_id = getattr(user, 'id')
     user_email = getattr(user, 'email')
+    print(f"🔐 DEBUG - Creating Google OAuth token for user ID: {user_id}, Email: {user_email}")
     access_token = create_access_token({"sub": str(user_id), "email": user_email})
+    print(f"🔐 DEBUG - Google OAuth login successful for: {user_email}")
     return {"access_token": access_token, "token_type": "bearer"} 
 
 @router.post("/register", response_model=Token)
@@ -209,7 +221,7 @@ async def gmail_oauth_init(user_id: Optional[str] = None):
     """
     try:
         # Import OAuth service lazily to handle any import issues
-        from services.email.gmail_oauth import gmail_oauth_service
+        from services.emailServices.gmail_oauth import gmail_oauth_service
         auth_url = gmail_oauth_service.get_authorization_url(state=user_id)
         return {"authorization_url": auth_url}
     except ImportError as import_error:
@@ -254,7 +266,7 @@ async def gmail_oauth_callback(
     
     try:
         # Import OAuth service lazily to handle any import issues
-        from services.email.gmail_oauth import gmail_oauth_service
+        from services.emailServices.gmail_oauth import gmail_oauth_service
         
         result = await gmail_oauth_service.handle_callback(code, state, db)
         logger.info("✓ OAuth callback completed successfully")

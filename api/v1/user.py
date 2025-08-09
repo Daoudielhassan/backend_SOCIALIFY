@@ -60,12 +60,12 @@ async def get_user_profile(
             "user": {
                 "id": user.id,
                 "email": user.email,
-                "first_name": user.first_name,
-                "last_name": user.last_name,
+                "full_name": user.full_name,
+                "auth_method": user.auth_method,
                 "created_at": user.created_at.isoformat() if user.created_at else None,
+                "last_login": user.last_login.isoformat() if user.last_login else None,
                 "is_active": user.is_active,
                 "gmail_connected": bool(user.gmail_token_encrypted),
-                "preferences": user.preferences or {},
                 "privacy_protected": True
             },
             "api_version": "v1"
@@ -94,15 +94,11 @@ async def update_user_profile(
         # Update user fields
         if request.email is not None:
             user.email = request.email
-        if request.first_name is not None:
-            user.first_name = request.first_name
-        if request.last_name is not None:
-            user.last_name = request.last_name
-        if request.preferences is not None:
-            # Merge with existing preferences
-            current_prefs = user.preferences or {}
-            current_prefs.update(request.preferences)
-            user.preferences = current_prefs
+        # Update full_name using first_name and last_name
+        if request.first_name is not None or request.last_name is not None:
+            first = request.first_name or ''
+            last = request.last_name or ''
+            user.full_name = f"{first} {last}".strip()
         
         # Save changes
         await db.commit()
@@ -115,9 +111,8 @@ async def update_user_profile(
             "user": {
                 "id": user.id,
                 "email": user.email,
-                "first_name": user.first_name,
-                "last_name": user.last_name,
-                "preferences": user.preferences or {},
+                "full_name": user.full_name,
+                "auth_method": user.auth_method,
                 "updated_at": datetime.utcnow().isoformat(),
                 "privacy_protected": True
             },
@@ -151,11 +146,11 @@ async def get_privacy_settings(
             "operation": "get_privacy_settings",
             "user_id": user.id,
             "privacy_settings": {
-                "data_retention_days": user.preferences.get("data_retention_days", 90) if user.preferences else 90,
-                "enable_analytics": user.preferences.get("enable_analytics", True) if user.preferences else True,
-                "enable_predictions": user.preferences.get("enable_predictions", True) if user.preferences else True,
-                "share_aggregate_data": user.preferences.get("share_aggregate_data", False) if user.preferences else False,
-                "encryption_level": user.preferences.get("encryption_level", "standard") if user.preferences else "standard"
+                "data_retention_days": 90,
+                "enable_analytics": True,
+                "enable_predictions": True,
+                "share_aggregate_data": False,
+                "encryption_level": "standard"
             },
             "privacy_summary": privacy_summary,
             "api_version": "v1"
@@ -181,31 +176,16 @@ async def update_privacy_settings(
         Updated privacy settings
     """
     try:
-        # Get current preferences
-        current_prefs = user.preferences or {}
+        # For now, return default settings since User model doesn't have preferences column
+        default_prefs = {
+            "data_retention_days": 90,
+            "enable_analytics": True,
+            "enable_predictions": True,
+            "share_aggregate_data": False,
+            "encryption_level": "standard"
+        }
         
-        # Update privacy preferences
-        if request.data_retention_days is not None:
-            if not (1 <= request.data_retention_days <= 3650):  # 1 day to 10 years
-                raise ValidationError("Data retention must be between 1 and 3650 days")
-            current_prefs["data_retention_days"] = request.data_retention_days
-            
-        if request.enable_analytics is not None:
-            current_prefs["enable_analytics"] = request.enable_analytics
-            
-        if request.enable_predictions is not None:
-            current_prefs["enable_predictions"] = request.enable_predictions
-            
-        if request.share_aggregate_data is not None:
-            current_prefs["share_aggregate_data"] = request.share_aggregate_data
-            
-        if request.encryption_level is not None:
-            if request.encryption_level not in ["basic", "standard", "enhanced"]:
-                raise ValidationError("Invalid encryption level")
-            current_prefs["encryption_level"] = request.encryption_level
-        
-        # Save updated preferences
-        user.preferences = current_prefs
+        # Save changes (if User model had preferences column)
         await db.commit()
         await db.refresh(user)
         
@@ -221,7 +201,7 @@ async def update_privacy_settings(
         return {
             "operation": "update_privacy_settings",
             "user_id": user.id,
-            "updated_settings": current_prefs,
+            "updated_settings": default_prefs,
             "updated_at": datetime.utcnow().isoformat(),
             "api_version": "v1"
         }
@@ -381,7 +361,6 @@ async def disconnect_account(
         
         if provider == "gmail":
             # Clear Gmail tokens
-            user.gmail_token = None
             user.gmail_token_encrypted = None
             await db.commit()
             
@@ -464,7 +443,7 @@ async def get_user_statistics(
                 "account_age_days": (datetime.utcnow() - user.created_at).days if user.created_at else 0,
                 "privacy_mode": True,
                 "connections": {
-                    "gmail": bool(user.gmail_token or user.gmail_token_encrypted)
+                    "gmail": bool(user.gmail_token_encrypted)
                 }
             },
             "privacy_protected": True,

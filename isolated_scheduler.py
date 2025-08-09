@@ -1,22 +1,30 @@
+#!/usr/bin/env python3
 """
-Scheduler Service
-Periodically fetches Gmail messages for all users with valid tokens
+Isolated Gmail Scheduler - Standalone Version
 """
 
 import asyncio
 import os
+import sys
 from datetime import datetime
 from typing import List
 
+# Add project root to path
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 from sqlalchemy import select
-
-from db.models import User
-from services.emailServices.email_service import email_service
-from utils.logger import logger
 from dotenv import load_dotenv
 
+# Load environment
 load_dotenv()
+
+# Import models and services
+from db.models import User
+from utils.logger import logger
+
+# Import email service directly to avoid circular imports
+from services.emailServices.email_service import HighPerformanceEmailService
 
 # Database configuration
 DATABASE_URL = os.getenv("DATABASE_URL")
@@ -28,8 +36,8 @@ if not DATABASE_URL:
     DB_NAME = os.getenv('DB_NAME', 'socialtify')
     DATABASE_URL = f'postgresql+asyncpg://{DB_USER}:{DB_PASS}@{DB_HOST}:{DB_PORT}/{DB_NAME}'
 
-class GmailSchedulerService:
-    """Service for scheduling periodic Gmail fetching"""
+class IsolatedGmailScheduler:
+    """Isolated Gmail Scheduler Service"""
     
     def __init__(self):
         if not DATABASE_URL:
@@ -39,16 +47,12 @@ class GmailSchedulerService:
         self.AsyncSessionLocal = async_sessionmaker(
             bind=self.engine, class_=AsyncSession, expire_on_commit=False
         )
-        self.is_running = False
+        # Create email service instance
+        self.email_service = HighPerformanceEmailService()
     
-    async def poll_gmail_for_all_users(self) -> dict:
-        """
-        Poll Gmail for all users with valid tokens
-        
-        Returns:
-            Dictionary with polling results
-        """
-        logger.info("🔄 Starting Gmail polling for all users...")
+    async def run_once(self) -> dict:
+        """Run Gmail polling once for all users"""
+        logger.info("🔄 Starting isolated Gmail polling...")
         
         async with self.AsyncSessionLocal() as db:
             try:
@@ -70,13 +74,20 @@ class GmailSchedulerService:
                 for user in users:
                     try:
                         logger.info(f"Processing Gmail for user: {user.email}")
-                        result = await email_service.fetch_messages_for_user(user, db)
+                        result = await self.email_service.fetch_messages_for_user(
+                            user=user, 
+                            db=db,
+                            provider="gmail",
+                            max_results=10,
+                            privacy_mode=True
+                        )
                         
                         if 'error' in result:
                             total_errors.append(f"User {user.email}: {result['error']}")
                         else:
-                            total_processed += result.get('processed', 0)
-                            logger.info(f"✅ Processed {result.get('processed', 0)} messages for {user.email}")
+                            processed = result.get('processed', 0)
+                            total_processed += processed
+                            logger.info(f"✅ Processed {processed} messages for {user.email}")
                         
                     except Exception as e:
                         error_msg = f"Error processing user {user.email}: {str(e)}"
@@ -96,62 +107,20 @@ class GmailSchedulerService:
             except Exception as e:
                 logger.error(f"❌ Critical error in Gmail polling: {str(e)}")
                 return {"error": str(e), "timestamp": datetime.utcnow().isoformat()}
-    
-    async def scheduler_loop(self, interval_minutes: int = 10):
-        """
-        Main scheduler loop
-        
-        Args:
-            interval_minutes: Interval between polling cycles
-        """
-        logger.info(f"🚀 Starting Gmail scheduler with {interval_minutes} minute intervals")
-        self.is_running = True
-        
-        while self.is_running:
-            try:
-                await self.poll_gmail_for_all_users()
-                logger.info(f"⏰ Next Gmail poll in {interval_minutes} minutes")
-                await asyncio.sleep(interval_minutes * 60)
-                
-            except KeyboardInterrupt:
-                logger.info("🛑 Scheduler stopped by user")
-                break
-            except Exception as e:
-                logger.error(f"❌ Scheduler error: {str(e)}")
-                # Wait a bit before retrying to avoid tight error loops
-                await asyncio.sleep(60)
-        
-        self.is_running = False
-        logger.info("📴 Gmail scheduler stopped")
-    
-    def stop(self):
-        """Stop the scheduler"""
-        self.is_running = False
-    
-    async def run_once(self):
-        """Run polling once (for testing or manual triggers)"""
-        return await self.poll_gmail_for_all_users()
 
-# Singleton instance
-gmail_scheduler_service = GmailSchedulerService()
-
-# CLI entry point
 async def main():
-    """Main entry point for running scheduler standalone"""
-    import argparse
+    """Main entry point"""
+    print("🚀 Starting Isolated Gmail Scheduler...")
     
-    parser = argparse.ArgumentParser(description='Gmail Scheduler Service')
-    parser.add_argument('--interval', type=int, default=10, help='Polling interval in minutes')
-    parser.add_argument('--once', action='store_true', help='Run once and exit')
-    
-    args = parser.parse_args()
-    
-    if args.once:
-        logger.info("Running Gmail polling once...")
-        result = await gmail_scheduler_service.run_once()
-        logger.info(f"Result: {result}")
-    else:
-        await gmail_scheduler_service.scheduler_loop(args.interval)
+    try:
+        scheduler = IsolatedGmailScheduler()
+        result = await scheduler.run_once()
+        print(f"✅ Scheduler completed successfully!")
+        print(f"📊 Result: {result}")
+    except Exception as e:
+        print(f"❌ Scheduler failed: {str(e)}")
+        import traceback
+        traceback.print_exc()
 
 if __name__ == "__main__":
     asyncio.run(main())

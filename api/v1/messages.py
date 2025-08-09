@@ -10,7 +10,7 @@ from typing import Dict, Any, List, Optional
 
 from api.dependencies import get_db, get_current_user
 from db.models import User, MessageMetadata
-from services.email import email_service
+from services.emailServices import email_service
 from services.analytics import analytics_service
 from services.privacy import privacy_service
 from utils.errors import (

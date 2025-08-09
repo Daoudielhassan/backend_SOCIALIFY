@@ -17,7 +17,7 @@ from utils.performance import (
 )
 from utils.logger import logger
 from config.settings import settings
-from services.email.gmail_oauth import GmailOAuthService
+from services.emailServices.gmail_oauth import GmailOAuthService
 from db.models import User, MessageMetadata
 from sqlalchemy.orm import Session
 
@@ -54,7 +54,11 @@ class HighPerformanceEmailService:
         """
         try:
             # Get Gmail service for user
-            service = await self.auth_service.get_gmail_service(user)
+            if not user.gmail_token_encrypted:
+                logger.error(f"User {user.id} has no Gmail token")
+                return {"error": "Gmail account not connected", "processed": 0}
+                
+            service, updated_credentials = self.auth_service.get_gmail_service(user.gmail_token_encrypted)
             if not service:
                 logger.error(f"Failed to get Gmail service for user {user.id}")
                 return {"error": "Gmail authentication failed", "processed": 0}
@@ -94,13 +98,12 @@ class HighPerformanceEmailService:
         # Extract headers safely
         header_dict = {h['name']: h['value'] for h in headers}
         
+        # Extract relevant metadata matching MessageMetadata model
         metadata = {
-            'message_id': message.get('id'),
-            'thread_id': message.get('threadId'),
-            'timestamp': datetime.fromtimestamp(int(message.get('internalDate', 0)) / 1000),
-            'subject_hash': hash(header_dict.get('Subject', '')) if privacy_mode else header_dict.get('Subject'),
+            'external_id': message.get('id'),
+            'received_at': datetime.fromtimestamp(int(message.get('internalDate', 0)) / 1000),
+            'subject_preview': header_dict.get('Subject', '')[:100] if header_dict.get('Subject') else None,
             'sender_domain': header_dict.get('From', '').split('@')[-1] if '@' in header_dict.get('From', '') else None,
-            'labels': message.get('labelIds', []),
         }
         
         return metadata
@@ -110,12 +113,11 @@ class HighPerformanceEmailService:
         try:
             message_metadata = MessageMetadata(
                 user_id=user_id,
-                message_id=metadata['message_id'],
-                thread_id=metadata['thread_id'],
-                timestamp=metadata['timestamp'],
-                subject_hash=metadata['subject_hash'],
-                sender_domain=metadata['sender_domain'],
-                labels=metadata['labels']
+                source='gmail',
+                external_id=metadata['external_id'],
+                sender_domain=metadata.get('sender_domain'),
+                subject_preview=metadata.get('subject_preview'),
+                received_at=metadata.get('received_at')
             )
             
             db.add(message_metadata)

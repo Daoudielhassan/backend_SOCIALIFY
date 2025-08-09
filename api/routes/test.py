@@ -7,7 +7,7 @@ from sqlalchemy import select, text
 from typing import Dict, Any, List
 from api.dependencies import get_db, get_current_user
 from db.models import User, MessageMetadata
-from services.email.email_service import email_service as email_service
+from services.emailServices.email_service import email_service as email_service
 from utils.logger import logger
 
 router = APIRouter()
@@ -128,7 +128,7 @@ async def comprehensive_gmail_test(
             "email": user.email,
             "user_id": user.id,
             "has_encrypted_token": bool(user.gmail_token_encrypted),
-            "has_legacy_token": bool(user.gmail_token),
+            "has_legacy_token": False,  # No legacy tokens in current model
             "auth_method": getattr(user, 'auth_method', 'unknown')
         },
         "connectivity": {},
@@ -138,16 +138,16 @@ async def comprehensive_gmail_test(
     
     # 1. Connectivity Test
     try:
-        if not user.gmail_token_encrypted and not user.gmail_token:
+        if not user.gmail_token_encrypted:
             results["connectivity"] = {
                 "status": "not_connected",
                 "error": "No Gmail token available"
             }
         else:
-            from services.email.gmail_oauth import gmail_oauth_service
+                        from services.emailServices.gmail_oauth import gmail_oauth_service
             
-            # Determine which token to use
-            token_to_use = user.gmail_token_encrypted or user.gmail_token
+            # Use the encrypted token
+            token_to_use = user.gmail_token_encrypted
             service, updated_credentials = gmail_oauth_service.get_gmail_service(token_to_use)
             
             # Test basic API access
@@ -157,7 +157,7 @@ async def comprehensive_gmail_test(
                 "status": "connected",
                 "gmail_address": profile.get('emailAddress'),
                 "messages_total": profile.get('messagesTotal', 0),
-                "token_type": "encrypted" if user.gmail_token_encrypted else "legacy"
+                "token_type": "encrypted"
             }
     except Exception as e:
         results["connectivity"] = {
@@ -229,7 +229,7 @@ async def comprehensive_gmail_test(
                 "last_metadata": recent_metadata[0].received_at.isoformat() if recent_metadata else None
             },
             "migration_status": {
-                "needs_migration": bool(user.gmail_token and not user.gmail_token_encrypted),
+                "needs_migration": False,  # No legacy tokens in current model
                 "privacy_ready": bool(user.gmail_token_encrypted)
             }
         }
@@ -249,9 +249,9 @@ async def comprehensive_gmail_test(
         "recommendations": []
     }
     
-    # Add recommendations
-    if not user.gmail_token_encrypted and user.gmail_token:
-        results["summary"]["recommendations"].append("Migrate to encrypted token storage")
+    # Add recommendations  
+    if not user.gmail_token_encrypted:
+        results["summary"]["recommendations"].append("Connect Gmail account")
     
     if results["connectivity"].get("status") != "connected":
         results["summary"]["recommendations"].append("Reconnect Gmail account")
@@ -271,8 +271,8 @@ async def test_authentication(user = Depends(get_current_user)):
         "auth_method": getattr(user, 'auth_method', 'unknown'),
         "gmail_status": {
             "has_encrypted_token": bool(user.gmail_token_encrypted),
-            "has_legacy_token": bool(user.gmail_token),
-            "connected": bool(user.gmail_token_encrypted or user.gmail_token)
+            "has_legacy_token": False,  # No legacy tokens in current model
+            "connected": bool(user.gmail_token_encrypted)
         },
         "message": "Authentication successful"
     }

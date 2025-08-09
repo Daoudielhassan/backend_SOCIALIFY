@@ -15,7 +15,7 @@ import uvicorn
 from sqlalchemy import text
 
 # Import optimized services from reorganized structure
-from services.email import email_service
+from services.emailServices import email_service
 from services.analytics import analytics_service
 from services.privacy import privacy_service
 

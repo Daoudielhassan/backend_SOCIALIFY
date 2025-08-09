@@ -10,11 +10,11 @@ from typing import Dict, Any, List, Optional
 
 from api.dependencies import get_db, get_current_user
 from db.models import User, MessageMetadata
-from services.email import email_service
+from services.emailServices import email_service
 from services.privacy import privacy_service
 from services.analytics import analytics_service
 from utils.errors import (
-    APIError, NotFoundError, ValidationError, ServerError, AuthorizationError,
+    APIError, NotFoundError, ValidationError, ServerError, AuthorizationError, AuthenticationError,
     handle_api_errors
 )
 from utils.logger import logger
@@ -114,15 +114,24 @@ async def fetch_gmail_messages(
 ):
     """
     Fetch messages from Gmail for the current user
-    
+
     Args:
         max_messages: Maximum number of messages to fetch (1-200)
         force_sync: Force synchronization even if recently synced
-        
+
     Returns:
         Fetch results with privacy protection
     """
     try:
+        logger.info(f"📧 Starting Gmail fetch for user {user.id}, max_messages: {max_messages}")
+        
+        # Check if user has encrypted token
+        if not user.gmail_token_encrypted:
+            logger.error(f"❌ User {user.id} has no Gmail token")
+            raise AuthenticationError("Gmail account not connected. Please connect your Gmail account first.")
+        
+        logger.info(f"🔑 User {user.id} has encrypted Gmail token")
+        
         # Fetch messages using unified email service
         result = await email_service.fetch_messages_for_user(
             user=user,
@@ -131,6 +140,13 @@ async def fetch_gmail_messages(
             max_results=max_messages,
             privacy_mode=True
         )
+        
+        logger.info(f"📧 Email service returned: {type(result)}")
+        
+        # If underlying service returned an error, propagate as auth error
+        if isinstance(result, dict) and result.get("error"):
+            logger.error(f"❌ Email service error: {result.get('error')}")
+            raise AuthenticationError(result.get("error"))
         
         return {
             "operation": "gmail_fetch",
@@ -141,10 +157,9 @@ async def fetch_gmail_messages(
             "privacy_protected": True,
             "api_version": "v1"
         }
-        
     except Exception as e:
         logger.error(f"Error fetching Gmail messages: {str(e)}")
-        raise ServerError(f"Gmail fetch failed: {str(e)}")
+        raise ServerError("Failed to fetch Gmail messages")
 
 @router.post("/fetch/all")
 async def fetch_all_users_gmail(
