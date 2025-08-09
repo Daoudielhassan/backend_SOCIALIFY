@@ -52,15 +52,17 @@ class HighPerformanceEmailService:
         """
         Base method to fetch messages for a user from Gmail API
         """
+        user_id = user.id  # Get user ID early to avoid lazy loading issues in error handlers
+        
         try:
             # Get Gmail service for user
             if not user.gmail_token_encrypted:
-                logger.error(f"User {user.id} has no Gmail token")
+                logger.error(f"User {user_id} has no Gmail token")
                 return {"error": "Gmail account not connected", "processed": 0}
                 
             service, updated_credentials = self.auth_service.get_gmail_service(user.gmail_token_encrypted)
             if not service:
-                logger.error(f"Failed to get Gmail service for user {user.id}")
+                logger.error(f"Failed to get Gmail service for user {user_id}")
                 return {"error": "Gmail authentication failed", "processed": 0}
             
             # Fetch messages from Gmail API
@@ -80,14 +82,15 @@ class HighPerformanceEmailService:
                 metadata = self._extract_message_metadata(msg, privacy_mode)
                 
                 # Store only metadata in database
-                await self._store_message_metadata(user.id, metadata, db)
-                processed_count += 1
+                stored = await self._store_message_metadata(user_id, metadata, db)
+                if stored:  # Only count if successfully stored (not duplicate)
+                    processed_count += 1
             
-            logger.info(f"Processed {processed_count} messages for user {user.id}")
+            logger.info(f"Processed {processed_count} messages for user {user_id}")
             return {"processed": processed_count, "total": len(messages)}
             
         except Exception as e:
-            logger.error(f"Error fetching messages for user {user.id}: {e}")
+            logger.error(f"Error fetching messages for user {user_id}: {e}")
             return {"error": str(e), "processed": 0}
     
     def _extract_message_metadata(self, message: Dict[str, Any], privacy_mode: bool = True) -> Dict[str, Any]:
@@ -108,8 +111,8 @@ class HighPerformanceEmailService:
         
         return metadata
     
-    async def _store_message_metadata(self, user_id: int, metadata: Dict[str, Any], db: Session):
-        """Store message metadata in database"""
+    async def _store_message_metadata(self, user_id: int, metadata: Dict[str, Any], db: Session) -> bool:
+        """Store message metadata in database. Returns True if stored, False if duplicate."""
         try:
             message_metadata = MessageMetadata(
                 user_id=user_id,
@@ -122,10 +125,18 @@ class HighPerformanceEmailService:
             
             db.add(message_metadata)
             await db.commit()
+            return True
             
         except Exception as e:
-            logger.error(f"Error storing message metadata: {e}")
-            await db.rollback()
+            # Check if this is a unique constraint violation (duplicate message)
+            if "duplicate key value violates unique constraint" in str(e) or "IntegrityError" in str(type(e).__name__):
+                logger.debug(f"Duplicate message detected and skipped: {metadata.get('subject_preview', 'Unknown')} from {metadata.get('sender_domain', 'Unknown')}")
+                await db.rollback()
+                return False  # Indicate duplicate/not stored
+            else:
+                logger.error(f"Error storing message metadata: {e}")
+                await db.rollback()
+                raise  # Re-raise non-duplicate errors
     
     
     @cached(ttl=300, key_prefix="gmail_messages")

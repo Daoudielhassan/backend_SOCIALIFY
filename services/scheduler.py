@@ -68,18 +68,19 @@ class GmailSchedulerService:
                 total_errors = []
                 
                 for user in users:
+                    user_email = user.email  # Get email early to avoid lazy loading in error handlers
                     try:
-                        logger.info(f"Processing Gmail for user: {user.email}")
+                        logger.info(f"Processing Gmail for user: {user_email}")
                         result = await email_service.fetch_messages_for_user(user, db)
                         
                         if 'error' in result:
-                            total_errors.append(f"User {user.email}: {result['error']}")
+                            total_errors.append(f"User {user_email}: {result['error']}")
                         else:
                             total_processed += result.get('processed', 0)
-                            logger.info(f"✅ Processed {result.get('processed', 0)} messages for {user.email}")
+                            logger.info(f"✅ Processed {result.get('processed', 0)} messages for {user_email}")
                         
                     except Exception as e:
-                        error_msg = f"Error processing user {user.email}: {str(e)}"
+                        error_msg = f"Error processing user {user_email}: {str(e)}"
                         logger.error(error_msg)
                         total_errors.append(error_msg)
                 
@@ -87,7 +88,7 @@ class GmailSchedulerService:
                     "total_users": len(users),
                     "processed_messages": total_processed,
                     "errors": total_errors,
-                    "timestamp": datetime.utcnow().isoformat()
+                    "timestamp": datetime.now().astimezone().isoformat()
                 }
                 
                 logger.info(f"📊 Gmail polling completed: {total_processed} messages processed, {len(total_errors)} errors")
@@ -95,7 +96,7 @@ class GmailSchedulerService:
                 
             except Exception as e:
                 logger.error(f"❌ Critical error in Gmail polling: {str(e)}")
-                return {"error": str(e), "timestamp": datetime.utcnow().isoformat()}
+                return {"error": str(e), "timestamp": datetime.now().astimezone().isoformat()}
     
     async def scheduler_loop(self, interval_minutes: int = 10):
         """

@@ -74,6 +74,9 @@ class MessageMetadata(Base):
     
     # Optimized indexes for high-performance queries
     __table_args__ = (
+        # Unique constraint to prevent duplicate messages
+        Index('uq_user_received_subject', 'user_id', 'received_at', 'subject_preview', unique=True),
+        
         # Core indexes for common queries
         Index('idx_user_source', 'user_id', 'source'),
         Index('idx_external_id', 'external_id'),

@@ -144,7 +144,7 @@ async def comprehensive_gmail_test(
                 "error": "No Gmail token available"
             }
         else:
-                        from services.emailServices.gmail_oauth import gmail_oauth_service
+            from services.emailServices.gmail_oauth import gmail_oauth_service
             
             # Use the encrypted token
             token_to_use = user.gmail_token_encrypted
@@ -159,6 +159,7 @@ async def comprehensive_gmail_test(
                 "messages_total": profile.get('messagesTotal', 0),
                 "token_type": "encrypted"
             }
+            
     except Exception as e:
         results["connectivity"] = {
             "status": "error",
