@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Request, Body
+from fastapi import APIRouter, Depends, HTTPException, status, Request, Body, Response
 from fastapi.responses import RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update
@@ -8,7 +8,7 @@ from api.dependencies import get_db, get_current_user
 from passlib.context import CryptContext
 from jose import jwt
 from datetime import datetime, timedelta
-from typing import Optional
+from typing import Optional, Literal
 import os
 import httpx
 import hashlib
@@ -44,7 +44,32 @@ ACCESS_TOKEN_EXPIRE_HOURS = int(os.getenv("JWT_EXPIRE_HOURS", 24))
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
 PASSWORD_SALT = os.getenv("PASSWORD_SALT", "default_salt")
 
+# Cookie configuration
+COOKIE_SECURE = os.getenv("COOKIE_SECURE", "true").lower() == "true"  # HTTPS only in production
+_samesite_value = os.getenv("COOKIE_SAMESITE", "lax")  # lax, strict, or none
+COOKIE_SAMESITE: Literal["lax", "strict", "none"] = "lax" if _samesite_value not in ["lax", "strict", "none"] else _samesite_value  # type: ignore
+COOKIE_DOMAIN = os.getenv("COOKIE_DOMAIN", None)  # None for same-origin
+
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+def set_auth_cookie(response: Response, token: str, expires_delta: Optional[timedelta] = None):
+    """Set httpOnly authentication cookie"""
+    if expires_delta:
+        expire = datetime.utcnow() + expires_delta
+    else:
+        expire = datetime.utcnow() + timedelta(hours=ACCESS_TOKEN_EXPIRE_HOURS)
+    
+    response.set_cookie(
+        key="access_token",
+        value=token,
+        max_age=int(expires_delta.total_seconds()) if expires_delta else ACCESS_TOKEN_EXPIRE_HOURS * 3600,
+        expires=expire,
+        httponly=True,  # Prevents XSS attacks
+        secure=COOKIE_SECURE,  # HTTPS only in production
+        samesite=COOKIE_SAMESITE,  # CSRF protection
+        domain=COOKIE_DOMAIN,  # Domain restriction
+        path="/"  # Available to entire application
+    )
 
 def hash_password(password: str) -> str:
     """Hash password using the same method as Flask backend"""
@@ -75,8 +100,9 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     
     return token
 
-@router.post("/login", response_model=Token)
-async def login(user_in: UserCreate, db: AsyncSession = Depends(get_db)):
+@router.post("/login")
+async def login(user_in: UserCreate, response: Response, db: AsyncSession = Depends(get_db)):
+    """Login with email and password - sets httpOnly cookie"""
     query = await db.execute(
         select(User).where(User.email == user_in.email)
     )
@@ -100,8 +126,20 @@ async def login(user_in: UserCreate, db: AsyncSession = Depends(get_db)):
     user_email = getattr(user, 'email')
     print(f"🔐 DEBUG - Creating token for user ID: {user_id}, Email: {user_email}")
     access_token = create_access_token({"sub": str(user_id), "email": user_email})
+    
+    # Set httpOnly cookie
+    set_auth_cookie(response, access_token)
+    
     print(f"🔐 DEBUG - Login successful for: {user_email}")
-    return {"access_token": access_token, "token_type": "bearer"}
+    return {
+        "message": "Login successful",
+        "user": {
+            "id": user_id,
+            "email": user_email,
+            "name": getattr(user, 'full_name', '')
+        },
+        "auth_method": "cookie"
+    }
 
 @router.get("/google")
 async def google_oauth_redirect(user_id: Optional[str] = None):
@@ -111,8 +149,9 @@ async def google_oauth_redirect(user_id: Optional[str] = None):
     """
     return await gmail_oauth_init(user_id)
 
-@router.post("/google", response_model=Token)
-async def google_login(request: Request, db: AsyncSession = Depends(get_db)):
+@router.post("/google")
+async def google_login(request: Request, response: Response, db: AsyncSession = Depends(get_db)):
+    """Google OAuth login - sets httpOnly cookie"""
     try:
         data = await request.json()
     except Exception:
@@ -163,11 +202,24 @@ async def google_login(request: Request, db: AsyncSession = Depends(get_db)):
     user_email = getattr(user, 'email')
     print(f"🔐 DEBUG - Creating Google OAuth token for user ID: {user_id}, Email: {user_email}")
     access_token = create_access_token({"sub": str(user_id), "email": user_email})
+    
+    # Set httpOnly cookie
+    set_auth_cookie(response, access_token)
+    
     print(f"🔐 DEBUG - Google OAuth login successful for: {user_email}")
-    return {"access_token": access_token, "token_type": "bearer"} 
+    return {
+        "message": "Google login successful",
+        "user": {
+            "id": user_id,
+            "email": user_email,
+            "name": getattr(user, 'full_name', '')
+        },
+        "auth_method": "cookie"
+    } 
 
-@router.post("/register", response_model=Token)
+@router.post("/register")
 async def register(
+    response: Response,
     name: str = Body(...),
     email: str = Body(...),
     password: str = Body(...),
@@ -197,7 +249,34 @@ async def register(
     user_id = getattr(new_user, 'id')
     user_email = getattr(new_user, 'email')
     access_token = create_access_token({"sub": str(user_id), "email": user_email})
-    return {"access_token": access_token, "token_type": "bearer"}
+    
+    # Set httpOnly cookie
+    set_auth_cookie(response, access_token)
+    
+    return {
+        "message": "Registration successful",
+        "user": {
+            "id": user_id,
+            "email": user_email,
+            "name": name
+        },
+        "auth_method": "cookie"
+    }
+
+@router.post("/logout")
+async def logout(response: Response):
+    """
+    Logout user by clearing the httpOnly cookie
+    """
+    response.delete_cookie(
+        key="access_token",
+        path="/",
+        domain=None,
+        secure=True,
+        httponly=True,
+        samesite="lax"
+    )
+    return {"message": "Logout successful"}
 
 # Gmail OAuth Routes
 @router.get("/gmail/oauth")
@@ -343,6 +422,32 @@ async def gmail_connection_status(user_id: int, db: AsyncSession = Depends(get_d
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to check Gmail status: {str(e)}")
+
+@router.get("/me")
+async def get_current_user_info(
+    current_user = Depends(get_current_user)
+):
+    """
+    Get the current authenticated user's information
+    
+    Returns:
+        Current user data (alias for /profile endpoint)
+    """
+    try:
+        return {
+            "id": current_user.id,
+            "email": current_user.email,
+            "full_name": current_user.full_name,
+            "auth_method": current_user.auth_method,
+            "created_at": current_user.created_at.isoformat() if current_user.created_at else None,
+            "last_login": current_user.last_login.isoformat() if current_user.last_login else None,
+            "is_active": current_user.is_active,
+            "gmail_connected": current_user.gmail_token_encrypted is not None,
+            "user_id": current_user.id  # For backward compatibility
+        }
+    except Exception as e:
+        logger.error(f"Failed to get current user info: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to get user information: {str(e)}")
 
 @router.get("/profile")
 async def get_user_profile(

@@ -33,7 +33,7 @@ class Settings:
     GOOGLE_REDIRECT_URI: str = os.getenv("GOOGLE_REDIRECT_URI", "http://localhost:5173/auth/callback")
     
     # External Services
-    AI_ENGINE_URL: str = os.getenv("AI_ENGINE_URL", "")
+    AI_ENGINE_URL: str = os.getenv("IA_ENGINE_URL", "")
     WHATSAPP_API_URL: str = os.getenv("WHATSAPP_API_URL", "")
     
     # Application Configuration

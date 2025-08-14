@@ -145,8 +145,9 @@ async def fetch_gmail_messages(
         
         # If underlying service returned an error, propagate as auth error
         if isinstance(result, dict) and result.get("error"):
-            logger.error(f"❌ Email service error: {result.get('error')}")
-            raise AuthenticationError(result.get("error"))
+            error_msg = result.get("error", "Unknown authentication error")
+            logger.error(f"❌ Email service error: {error_msg}")
+            raise AuthenticationError(str(error_msg))
         
         return {
             "operation": "gmail_fetch",
@@ -218,14 +219,10 @@ async def get_gmail_analytics(
     """
     try:
         # Get analytics filtered for Gmail only
-        analytics_data = await analytics_service.get_user_analytics(
+        analytics_data = await analytics_service.get_user_analytics_optimized(
             user_id=user.id,
             db=db,
-            days=days,
-            metrics=[
-                "message_count", "priority_distribution", 
-                "sender_patterns", "time_patterns"
-            ]
+            days=days
         )
         
         # Filter for Gmail-specific data

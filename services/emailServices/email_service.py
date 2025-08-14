@@ -19,7 +19,6 @@ from utils.logger import logger
 from config.settings import settings
 from services.emailServices.gmail_oauth import GmailOAuthService
 from db.models import User, MessageMetadata
-from sqlalchemy.orm import Session
 
 class HighPerformanceEmailService:
     """
@@ -44,7 +43,7 @@ class HighPerformanceEmailService:
     async def fetch_messages_for_user(
         self,
         user: User,
-        db: Session,
+        db: AsyncSession,
         provider: str = "gmail",
         max_results: int = 100,
         privacy_mode: bool = True
@@ -52,15 +51,22 @@ class HighPerformanceEmailService:
         """
         Base method to fetch messages for a user from Gmail API
         """
-        user_id = user.id  # Get user ID early to avoid lazy loading issues in error handlers
+        # Extract values from User model to avoid SQLAlchemy column type issues
+        user_id = getattr(user, 'id', 0)
+        gmail_token = getattr(user, 'gmail_token_encrypted', None)
+        
+        # Verify database session is async-capable
+        if not hasattr(db, 'commit'):
+            logger.error(f"Database session for user {user_id} is not properly configured")
+            return {"error": "Database configuration error", "processed": 0}
         
         try:
             # Get Gmail service for user
-            if not user.gmail_token_encrypted:
+            if not gmail_token:
                 logger.error(f"User {user_id} has no Gmail token")
                 return {"error": "Gmail account not connected", "processed": 0}
                 
-            service, updated_credentials = self.auth_service.get_gmail_service(user.gmail_token_encrypted)
+            service, updated_credentials = self.auth_service.get_gmail_service(gmail_token)
             if not service:
                 logger.error(f"Failed to get Gmail service for user {user_id}")
                 return {"error": "Gmail authentication failed", "processed": 0}
@@ -75,16 +81,27 @@ class HighPerformanceEmailService:
             processed_count = 0
             
             for message in messages:
-                # Get message details
-                msg = service.users().messages().get(userId='me', id=message['id']).execute()
-                
-                # Process message metadata (privacy-first approach)
-                metadata = self._extract_message_metadata(msg, privacy_mode)
-                
-                # Store only metadata in database
-                stored = await self._store_message_metadata(user_id, metadata, db)
-                if stored:  # Only count if successfully stored (not duplicate)
-                    processed_count += 1
+                try:
+                    # Get message details
+                    msg = service.users().messages().get(userId='me', id=message['id']).execute()
+                    
+                    # Process message metadata with AI predictions
+                    metadata = await self._extract_message_metadata_with_ai(msg, user_id, privacy_mode)
+                    
+                    # Store metadata with AI predictions in database
+                    try:
+                        stored = await self._store_message_metadata(user_id, metadata, db)
+                        if stored:  # Only count if successfully stored (not duplicate)
+                            processed_count += 1
+                            logger.debug(f"Successfully processed message {message.get('id')} for user {user_id}")
+                    except Exception as db_error:
+                        logger.error(f"Database error for message {message.get('id')}: {str(db_error)}")
+                        # Continue processing other messages even if one fails
+                        continue
+                        
+                except Exception as msg_error:
+                    logger.error(f"Error processing message {message.get('id')}: {str(msg_error)}")
+                    continue
             
             logger.info(f"Processed {processed_count} messages for user {user_id}")
             return {"processed": processed_count, "total": len(messages)}
@@ -93,8 +110,51 @@ class HighPerformanceEmailService:
             logger.error(f"Error fetching messages for user {user_id}: {e}")
             return {"error": str(e), "processed": 0}
     
+    async def _extract_message_metadata_with_ai(self, message: Dict[str, Any], user_id: int, privacy_mode: bool = True) -> Dict[str, Any]:
+        """Extract privacy-safe metadata from Gmail message with AI predictions"""
+        payload = message.get('payload', {})
+        headers = payload.get('headers', [])
+        
+        # Extract headers safely
+        header_dict = {h['name']: h['value'] for h in headers}
+        
+        # Extract relevant metadata matching MessageMetadata model
+        metadata = {
+            'external_id': message.get('id'),
+            'received_at': datetime.fromtimestamp(int(message.get('internalDate', 0)) / 1000),
+            'subject_preview': header_dict.get('Subject', '')[:100] if header_dict.get('Subject') else None,
+            'sender_domain': header_dict.get('From', '').split('@')[-1] if '@' in header_dict.get('From', '') else None,
+        }
+        
+        # Add AI predictions
+        try:
+            from services.analytics.analytics_service import analytics_service
+            
+            if metadata.get('subject_preview') and metadata.get('sender_domain'):
+                prediction = await analytics_service.predict_message_classification(
+                    subject=metadata['subject_preview'],
+                    sender_domain=metadata['sender_domain'],
+                    source='gmail',
+                    user_id=user_id
+                )
+                
+                # Add AI predictions to metadata
+                metadata.update({
+                    'predicted_priority': prediction.get('priority'),
+                    'predicted_context': prediction.get('context'),
+                    'prediction_confidence': prediction.get('confidence', {}).get('priority', 0.5)
+                })
+                
+                logger.debug(f"AI prediction added: {prediction.get('priority')} priority for '{metadata['subject_preview'][:30]}...'")
+            
+        except Exception as e:
+            logger.warning(f"AI prediction failed for message {metadata.get('external_id')}: {str(e)}")
+            # Continue without predictions
+        
+        return metadata
+    
     def _extract_message_metadata(self, message: Dict[str, Any], privacy_mode: bool = True) -> Dict[str, Any]:
-        """Extract privacy-safe metadata from Gmail message"""
+        """Extract privacy-safe metadata from Gmail message (legacy method)"""
         payload = message.get('payload', {})
         headers = payload.get('headers', [])
         
@@ -111,32 +171,61 @@ class HighPerformanceEmailService:
         
         return metadata
     
-    async def _store_message_metadata(self, user_id: int, metadata: Dict[str, Any], db: Session) -> bool:
+    async def _store_message_metadata(self, user_id: int, metadata: Dict[str, Any], db: AsyncSession) -> bool:
         """Store message metadata in database. Returns True if stored, False if duplicate."""
         try:
+            # Check for existing message first to avoid unique constraint violation
+            from sqlalchemy import select
+            
+            existing_query = select(MessageMetadata).where(
+                MessageMetadata.user_id == user_id,
+                MessageMetadata.received_at == metadata.get('received_at'),
+                MessageMetadata.subject_preview == metadata.get('subject_preview')
+            )
+            
+            result = await db.execute(existing_query)
+            existing_message = result.scalar_one_or_none()
+            
+            if existing_message:
+                logger.debug(f"Duplicate message already exists: {metadata.get('subject_preview', 'Unknown')} from {metadata.get('sender_domain', 'Unknown')}")
+                return False  # Message already exists
+            
+            # Create and insert new message metadata
             message_metadata = MessageMetadata(
                 user_id=user_id,
                 source='gmail',
                 external_id=metadata['external_id'],
                 sender_domain=metadata.get('sender_domain'),
                 subject_preview=metadata.get('subject_preview'),
-                received_at=metadata.get('received_at')
+                received_at=metadata.get('received_at'),
+                # Add AI predictions
+                predicted_priority=metadata.get('predicted_priority'),
+                predicted_context=metadata.get('predicted_context'),
+                prediction_confidence=metadata.get('prediction_confidence')
             )
             
             db.add(message_metadata)
             await db.commit()
+            logger.debug(f"Successfully stored message metadata for user {user_id}")
             return True
             
         except Exception as e:
-            # Check if this is a unique constraint violation (duplicate message)
-            if "duplicate key value violates unique constraint" in str(e) or "IntegrityError" in str(type(e).__name__):
-                logger.debug(f"Duplicate message detected and skipped: {metadata.get('subject_preview', 'Unknown')} from {metadata.get('sender_domain', 'Unknown')}")
-                await db.rollback()
-                return False  # Indicate duplicate/not stored
+            # Fallback: Check if it's a unique constraint violation
+            error_msg = str(e).lower()
+            if "unique" in error_msg or "duplicate" in error_msg or "integrity" in error_msg:
+                logger.debug(f"Unique constraint violation caught: {metadata.get('subject_preview', 'Unknown')}")
+                try:
+                    await db.rollback()
+                except Exception:
+                    pass
+                return False  # Treat as duplicate
             else:
                 logger.error(f"Error storing message metadata: {e}")
-                await db.rollback()
-                raise  # Re-raise non-duplicate errors
+                try:
+                    await db.rollback()
+                except Exception:
+                    pass
+                return False  # Return False instead of raising to prevent cascading errors
     
     
     @cached(ttl=300, key_prefix="gmail_messages")
@@ -454,6 +543,40 @@ class HighPerformanceEmailService:
             health_data["cache_error"] = str(e)
         
         return health_data
+    
+    def get_supported_providers(self) -> List[str]:
+        """Get list of supported email providers"""
+        return ["gmail"]  # Currently only Gmail is supported
+    
+    async def get_provider_status(self, provider: str) -> Dict[str, Any]:
+        """Get status of a specific email provider"""
+        if provider.lower() != "gmail":
+            return {
+                "provider": provider,
+                "status": "unsupported",
+                "message": "Provider not supported"
+            }
+        
+        try:
+            # Check Gmail API accessibility
+            health_data = await self.health_check_performance()
+            
+            return {
+                "provider": "gmail",
+                "status": "active" if health_data.get("status") == "healthy" else "degraded",
+                "api_status": health_data.get("gmail_api_status", "unknown"),
+                "oauth_status": "configured" if settings.GOOGLE_CLIENT_ID else "not_configured",
+                "last_check": datetime.utcnow().isoformat()
+            }
+            
+        except Exception as e:
+            logger.error(f"Failed to check Gmail provider status: {e}")
+            return {
+                "provider": "gmail",
+                "status": "error",
+                "error": str(e),
+                "last_check": datetime.utcnow().isoformat()
+            }
 
 # Service instantiation - create when needed
 email_service = None

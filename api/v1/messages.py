@@ -423,7 +423,7 @@ async def get_message_analytics(
     """
     try:
         # Get user analytics from unified service
-        analytics_data = await analytics_service.get_user_analytics(
+        analytics_data = await analytics_service.get_user_analytics_optimized(
             user_id=user.id,
             db=db,
             days=days
@@ -489,10 +489,21 @@ async def submit_message_feedback(
             raise NotFoundError("Message not found")
         
         # Submit feedback using analytics service
+        feedback_data = {}
+        feedback_type = "correction"  # Default type
+        
+        if feedback_priority:
+            feedback_data["priority"] = feedback_priority
+            feedback_type = "priority"
+        if feedback_context:
+            feedback_data["context"] = feedback_context
+            feedback_type = "context" if not feedback_priority else "both"
+        
         feedback_result = await analytics_service.record_user_feedback(
+            user_id=user.id,
             message_id=message_id,
-            feedback_priority=feedback_priority,
-            feedback_context=feedback_context,
+            feedback_type=feedback_type,
+            feedback_data=feedback_data,
             db=db
         )
         
