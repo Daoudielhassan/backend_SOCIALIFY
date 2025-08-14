@@ -714,9 +714,9 @@ class HighPerformanceAnalyticsService:
             from sqlalchemy import update
             
             update_values = {}
-            if feedback_type == "priority" and "priority" in feedback_data:
+            if "priority" in feedback_data:
                 update_values["feedback_priority"] = feedback_data["priority"]
-            if feedback_type == "context" and "context" in feedback_data:
+            if "context" in feedback_data:
                 update_values["feedback_context"] = feedback_data["context"]
             
             if update_values:
@@ -733,7 +733,7 @@ class HighPerformanceAnalyticsService:
                 # Invalidate related caches
                 await self.invalidate_user_analytics_cache(user_id)
                 
-                logger.info(f"Recorded feedback for user {user_id}, message {message_id}")
+                logger.info(f"Recorded feedback for user {user_id}, message {message_id}: {update_values}")
                 
             return {
                 "status": "success",

@@ -35,6 +35,7 @@ async def list_messages(
     context: Optional[str] = Query(default=None, description="Filter by context"),
     search: Optional[str] = Query(default=None, description="Search in subject/sender domain"),
     days: int = Query(default=30, ge=1, le=365, description="Number of days to search"),
+    has_feedback: Optional[bool] = Query(default=None, description="Filter by feedback existence"),
     db: AsyncSession = Depends(get_db),
     user = Depends(get_current_user)
 ):
@@ -49,9 +50,10 @@ async def list_messages(
         context: Filter by predicted context
         search: Search term for subject/sender domain
         days: Number of days to search back
+        has_feedback: Filter by feedback existence (true/false/null for all)
         
     Returns:
-        Paginated list of privacy-protected message metadata
+        Paginated list of privacy-protected message metadata with feedback data
     """
     try:
         # Build query conditions
@@ -72,6 +74,21 @@ async def list_messages(
         # Context filter
         if context:
             conditions.append(MessageMetadata.predicted_context == context)
+        
+        # Feedback filter
+        if has_feedback is not None:
+            if has_feedback:
+                # Show only messages with feedback
+                conditions.append(or_(
+                    MessageMetadata.feedback_priority.isnot(None),
+                    MessageMetadata.feedback_context.isnot(None)
+                ))
+            else:
+                # Show only messages without feedback
+                conditions.append(and_(
+                    MessageMetadata.feedback_priority.is_(None),
+                    MessageMetadata.feedback_context.is_(None)
+                ))
         
         # Search filter (privacy-safe: only subject preview and sender domain)
         if search:
@@ -101,11 +118,14 @@ async def list_messages(
                 "source": msg.source,
                 "sender_domain": msg.sender_domain,  # Domain only for privacy
                 "subject_preview": msg.subject_preview,  # Preview only
-                "received_at": msg.received_at.isoformat() if msg.received_at else None,
+                "received_at": msg.received_at.isoformat() if msg.received_at is not None else None,
                 "predicted_priority": msg.predicted_priority,
                 "predicted_context": msg.predicted_context,
                 "prediction_confidence": msg.prediction_confidence,
-                "processed_at": msg.processed_at.isoformat() if msg.processed_at else None,
+                "processed_at": msg.processed_at.isoformat() if msg.processed_at is not None else None,
+                "feedback_priority": msg.feedback_priority,  # User feedback data
+                "feedback_context": msg.feedback_context,    # User feedback data
+                "has_feedback": bool(msg.feedback_priority is not None or msg.feedback_context is not None),
                 "privacy_protected": True
             })
         
@@ -127,7 +147,8 @@ async def list_messages(
                 "priority": priority,
                 "context": context,
                 "search": search,
-                "days": days
+                "days": days,
+                "has_feedback": has_feedback
             },
             "privacy_protected": True,
             "api_version": "v1"
@@ -179,9 +200,9 @@ async def get_processed_messages(
                 "predicted_priority": msg.predicted_priority,
                 "predicted_context": msg.predicted_context,
                 "prediction_confidence": msg.prediction_confidence,
-                "created_at": msg.created_at.isoformat() if msg.created_at else None,
-                "processed_at": msg.processed_at.isoformat() if msg.processed_at else None,
-                "received_at": msg.received_at.isoformat() if msg.received_at else None,
+                "created_at": msg.created_at.isoformat() if msg.created_at is not None else None,
+                "processed_at": msg.processed_at.isoformat() if msg.processed_at is not None else None,
+                "received_at": msg.received_at.isoformat() if msg.received_at is not None else None,
             })
         
         # Get total count for pagination
@@ -246,15 +267,15 @@ async def get_message(
             "external_id": message.external_id,
             "sender_domain": message.sender_domain,
             "subject_preview": message.subject_preview,
-            "received_at": message.received_at.isoformat() if message.received_at else None,
+            "received_at": message.received_at.isoformat() if message.received_at is not None else None,
             "predicted_priority": message.predicted_priority,
             "predicted_context": message.predicted_context,
             "prediction_confidence": message.prediction_confidence,
             "feedback_priority": message.feedback_priority,
             "feedback_context": message.feedback_context,
             "used_in_retrain": message.used_in_retrain,
-            "created_at": message.created_at.isoformat() if message.created_at else None,
-            "processed_at": message.processed_at.isoformat() if message.processed_at else None,
+            "created_at": message.created_at.isoformat() if message.created_at is not None else None,
+            "processed_at": message.processed_at.isoformat() if message.processed_at is not None else None,
             "privacy_protected": True,
             "note": "Content not stored for privacy compliance",
             "api_version": "v1"

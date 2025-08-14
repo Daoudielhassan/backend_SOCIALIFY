@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, update
 from db.models import MessageMetadata
 from db.schemas import FeedbackRequest
 from api.dependencies import get_db, get_current_user
@@ -12,11 +13,27 @@ async def submit_feedback(
     db: AsyncSession = Depends(get_db),
     user=Depends(get_current_user),
 ):
-    msg = await db.get(MessageMetadata, req.message_id)
-    if not msg or msg.user_id != user.id:
+    # First, verify the message exists and belongs to the user
+    query = await db.execute(
+        select(MessageMetadata).where(
+            MessageMetadata.id == req.message_id,
+            MessageMetadata.user_id == user.id
+        )
+    )
+    msg = query.scalar_one_or_none()
+    
+    if not msg:
         raise HTTPException(status_code=404, detail="Message not found")
-    msg.feedback_priority = req.feedback_priority
-    msg.feedback_context = req.feedback_context
-    msg.used_in_retrain = False
+    
+    # Update the message with feedback using SQLAlchemy update
+    await db.execute(
+        update(MessageMetadata)
+        .where(MessageMetadata.id == req.message_id)
+        .values(
+            feedback_priority=req.feedback_priority,
+            feedback_context=req.feedback_context,
+            used_in_retrain=False
+        )
+    )
     await db.commit()
     return 
