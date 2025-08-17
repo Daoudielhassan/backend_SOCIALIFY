@@ -366,24 +366,16 @@ async def gmail_oauth_callback(
         # Create JWT token for the user
         access_token = create_access_token({"sub": str(result["user_id"]), "email": result["email"]})
         
-        # Redirect to frontend dashboard with user information
+        # Redirect to frontend dashboard WITHOUT user data in URL
         frontend_url = os.getenv("FRONTEND_URL", "http://localhost:5173")
-        
-        # Include user data in URL parameters for frontend initialization
-        dashboard_url = (
-            f"{frontend_url}/dashboard?"
-            f"user_id={result['user_id']}&"
-            f"email={result['email']}&"
-            f"name={result.get('name', '')}&"
-            f"auth_success=true"
-        )
+        dashboard_url = f"{frontend_url}/dashboard"
         
         # Create redirect response and set httpOnly cookie
         response = RedirectResponse(url=dashboard_url)
         set_auth_cookie(response, access_token)
         
-        logger.info(f"🚀 Redirecting to dashboard with user data: {frontend_url}/dashboard")
-        logger.info(f"🔐 User data: ID={result['user_id']}, Email={result['email']}")
+        logger.info(f"🚀 Redirecting to dashboard: {dashboard_url}")
+        logger.info(f"🔐 JWT token set as httpOnly cookie for user: {result['email']}")
         return response
         
     except ImportError as import_error:
