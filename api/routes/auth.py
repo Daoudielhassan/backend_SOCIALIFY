@@ -7,7 +7,7 @@ from db.schemas import UserCreate, Token
 from api.dependencies import get_db, get_current_user
 from passlib.context import CryptContext
 from jose import jwt
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, Literal
 import os
 import httpx
@@ -45,7 +45,7 @@ GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
 PASSWORD_SALT = os.getenv("PASSWORD_SALT", "default_salt")
 
 # Cookie configuration
-COOKIE_SECURE = os.getenv("COOKIE_SECURE", "true").lower() == "true"  # HTTPS only in production
+COOKIE_SECURE = os.getenv("COOKIE_SECURE", "false").lower() == "true"  # HTTPS only in production, false for local dev
 _samesite_value = os.getenv("COOKIE_SAMESITE", "lax")  # lax, strict, or none
 COOKIE_SAMESITE: Literal["lax", "strict", "none"] = "lax" if _samesite_value not in ["lax", "strict", "none"] else _samesite_value  # type: ignore
 COOKIE_DOMAIN = os.getenv("COOKIE_DOMAIN", None)  # None for same-origin
@@ -55,20 +55,40 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 def set_auth_cookie(response: Response, token: str, expires_delta: Optional[timedelta] = None):
     """Set httpOnly authentication cookie"""
     if expires_delta:
-        expire = datetime.utcnow() + expires_delta
+        expire = datetime.now(timezone.utc) + expires_delta
+        max_age = int(expires_delta.total_seconds())
     else:
-        expire = datetime.utcnow() + timedelta(hours=ACCESS_TOKEN_EXPIRE_HOURS)
-    
-    response.set_cookie(
+        expire = datetime.now(timezone.utc) + timedelta(days=7)
+        max_age = 7 * 24 * 3600
+
+    logger.info(f"[set_auth_cookie] Setting cookie with token starting: {token[:10]}... | max_age={max_age} | expire={expire} | secure={COOKIE_SECURE} | samesite={COOKIE_SAMESITE} | domain={COOKIE_DOMAIN}")
+
+    try:
+        response.set_cookie(
+            key="access_token",
+            value=token,
+            max_age=max_age,
+            expires=expire,  # Use datetime object directly instead of string formatting
+            httponly=True,  # Prevents XSS attacks
+            secure=COOKIE_SECURE,  # HTTPS only in production
+            samesite=COOKIE_SAMESITE,  # CSRF protection
+            domain=COOKIE_DOMAIN,  # Domain restriction
+            path="/"  # Available to entire application
+        )
+        logger.info(f"✅ Cookie set successfully for path /")
+    except Exception as e:
+        logger.error(f"❌ Failed to set cookie: {str(e)}")
+        raise
+
+def clear_auth_cookie(response: Response):
+    """Clear httpOnly authentication cookie"""
+    response.delete_cookie(
         key="access_token",
-        value=token,
-        max_age=int(expires_delta.total_seconds()) if expires_delta else ACCESS_TOKEN_EXPIRE_HOURS * 3600,
-        expires=expire,
-        httponly=True,  # Prevents XSS attacks
-        secure=COOKIE_SECURE,  # HTTPS only in production
-        samesite=COOKIE_SAMESITE,  # CSRF protection
-        domain=COOKIE_DOMAIN,  # Domain restriction
-        path="/"  # Available to entire application
+        path="/",
+        domain=COOKIE_DOMAIN,
+        secure=COOKIE_SECURE,
+        httponly=True,
+        samesite=COOKIE_SAMESITE
     )
 
 def hash_password(password: str) -> str:
@@ -88,7 +108,7 @@ def get_password_hash(password: str) -> str:
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     to_encode = data.copy()
-    expire = datetime.utcnow() + (expires_delta or timedelta(hours=ACCESS_TOKEN_EXPIRE_HOURS))
+    expire = datetime.now(timezone.utc) + (expires_delta or timedelta(hours=ACCESS_TOKEN_EXPIRE_HOURS))
     to_encode.update({"exp": expire})
     token = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     
@@ -119,7 +139,7 @@ async def login(user_in: UserCreate, response: Response, db: AsyncSession = Depe
     # Update last_login
     user_id = getattr(user, 'id')
     await db.execute(
-        update(User).where(User.id == user_id).values(last_login=datetime.utcnow())
+        update(User).where(User.id == user_id).values(last_login=datetime.now(timezone.utc).replace(tzinfo=None))
     )
     await db.commit()
     
@@ -184,8 +204,8 @@ async def google_login(request: Request, response: Response, db: AsyncSession = 
             google_id=id_info.get("sub"),
             auth_method="google",
             is_active=True,
-            created_at=datetime.utcnow(),
-            last_login=datetime.utcnow(),
+            created_at=datetime.now(timezone.utc).replace(tzinfo=None),
+            last_login=datetime.now(timezone.utc).replace(tzinfo=None),
         )
         db.add(user)
         await db.commit()
@@ -194,7 +214,7 @@ async def google_login(request: Request, response: Response, db: AsyncSession = 
         # Update last_login for existing user
         user_id = getattr(user, 'id')
         await db.execute(
-            update(User).where(User.id == user_id).values(last_login=datetime.utcnow())
+            update(User).where(User.id == user_id).values(last_login=datetime.now(timezone.utc).replace(tzinfo=None))
         )
         await db.commit()
     
@@ -239,8 +259,8 @@ async def register(
         password_hash=password_hash,
         auth_method="email",
         is_active=True,
-        created_at=datetime.utcnow(),
-        last_login=datetime.utcnow(),
+        created_at=datetime.now(timezone.utc).replace(tzinfo=None),
+        last_login=datetime.now(timezone.utc).replace(tzinfo=None),
     )
     db.add(new_user)
     await db.commit()
@@ -268,14 +288,7 @@ async def logout(response: Response):
     """
     Logout user by clearing the httpOnly cookie
     """
-    response.delete_cookie(
-        key="access_token",
-        path="/",
-        domain=None,
-        secure=True,
-        httponly=True,
-        samesite="lax"
-    )
+    clear_auth_cookie(response)
     return {"message": "Logout successful"}
 
 # Gmail OAuth Routes
@@ -353,12 +366,25 @@ async def gmail_oauth_callback(
         # Create JWT token for the user
         access_token = create_access_token({"sub": str(result["user_id"]), "email": result["email"]})
         
-        # Redirect to frontend dashboard with token
+        # Redirect to frontend dashboard with user information
         frontend_url = os.getenv("FRONTEND_URL", "http://localhost:5173")
-        dashboard_url = f"{frontend_url}/dashboard?token={access_token}&user_id={result['user_id']}&email={result['email']}"
         
-        logger.info(f"🚀 Redirecting to dashboard: {frontend_url}/dashboard")
-        return RedirectResponse(url=dashboard_url)
+        # Include user data in URL parameters for frontend initialization
+        dashboard_url = (
+            f"{frontend_url}/dashboard?"
+            f"user_id={result['user_id']}&"
+            f"email={result['email']}&"
+            f"name={result.get('name', '')}&"
+            f"auth_success=true"
+        )
+        
+        # Create redirect response and set httpOnly cookie
+        response = RedirectResponse(url=dashboard_url)
+        set_auth_cookie(response, access_token)
+        
+        logger.info(f"🚀 Redirecting to dashboard with user data: {frontend_url}/dashboard")
+        logger.info(f"🔐 User data: ID={result['user_id']}, Email={result['email']}")
+        return response
         
     except ImportError as import_error:
         logger.error(f"OAuth service import failed: {import_error}")
