@@ -6,13 +6,26 @@ PRIVACY-FOCUSED: Tokens are encrypted at rest
 
 import os
 import json
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, TYPE_CHECKING
 from urllib.parse import urlencode
 from fastapi import HTTPException
 from utils.logger import logger
 from datetime import datetime
+from config.settings import settings
 
-# Import Google APIs lazily to avoid blocking
+# Import required dependencies
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, update
+from utils.encryption import token_encryption
+
+# Import Google APIs with proper type checking
+if TYPE_CHECKING:
+    from google.auth.transport.requests import Request
+    from google.oauth2.credentials import Credentials
+    from google_auth_oauthlib.flow import Flow
+    from googleapiclient.errors import HttpError
+
+# Import Google APIs at runtime
 try:
     from google.auth.transport.requests import Request
     from google.oauth2.credentials import Credentials
@@ -23,25 +36,19 @@ try:
 except ImportError as e:
     logger.warning(f"Google APIs not available: {e}")
     GOOGLE_APIS_AVAILABLE = False
-
-# Import other dependencies - Use lazy imports to avoid circular dependencies
-try:
-    from sqlalchemy.ext.asyncio import AsyncSession
-    from sqlalchemy import select, update
-    # Import models lazily when needed to avoid circular imports
-    from utils.encryption import token_encryption
-    FULL_FEATURES_AVAILABLE = True
-except ImportError as e:
-    logger.warning(f"Some features not available: {e}")
-    FULL_FEATURES_AVAILABLE = False
+    Request = None
+    Credentials = None
+    Flow = None
+    build = None
+    HttpError = Exception
 
 from dotenv import load_dotenv
 load_dotenv()
 
-# OAuth2 configuration - Direct environment access to avoid circular imports
-GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
-GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
-GOOGLE_REDIRECT_URI = os.getenv("GOOGLE_REDIRECT_URI", "http://localhost:8000/auth/google/callback")
+# OAuth2 configuration - Using centralized settings
+GOOGLE_CLIENT_ID = settings.GOOGLE_CLIENT_ID
+GOOGLE_CLIENT_SECRET = settings.GOOGLE_CLIENT_SECRET
+GOOGLE_REDIRECT_URI = settings.GOOGLE_REDIRECT_URI
 
 # Gmail API scopes - READ-ONLY for privacy
 SCOPES = [
@@ -84,7 +91,19 @@ class GmailOAuthService:
         Returns:
             Authorization URL for Gmail READ-ONLY access
         """
+        if not GOOGLE_APIS_AVAILABLE:
+            logger.error("Google API dependencies are not available")
+            raise HTTPException(status_code=500, detail="Google API dependencies are missing")
+        
+        if not self.client_config:
+            logger.error("Google OAuth credentials not configured")
+            raise HTTPException(status_code=500, detail="Google OAuth not configured")
+            
         try:
+            if not Flow:
+                logger.error("Google OAuth Flow not available")
+                raise HTTPException(status_code=500, detail="Google OAuth Flow dependencies are missing")
+            
             flow = Flow.from_client_config(
                 self.client_config,
                 scopes=SCOPES,
@@ -102,7 +121,7 @@ class GmailOAuthService:
             return auth_url
             
         except Exception as e:
-            logger.error("Failed to generate OAuth URL")
+            logger.error(f"Failed to generate OAuth URL: {e}")
             raise HTTPException(status_code=500, detail="Failed to generate authorization URL")
     
     async def handle_callback(self, code: str, state: Optional[str], db: AsyncSession) -> Dict[str, Any]:
@@ -117,10 +136,22 @@ class GmailOAuthService:
         Returns:
             User information and token status
         """
+        if not GOOGLE_APIS_AVAILABLE:
+            logger.error("Google API dependencies are not available")
+            raise HTTPException(status_code=500, detail="Google API dependencies are missing")
+        
+        if not self.client_config:
+            logger.error("Google OAuth credentials not configured")
+            raise HTTPException(status_code=500, detail="Google OAuth not configured")
+        
         # Import User model lazily to avoid circular imports
         from db.models import User
         
         try:
+            if not Flow:
+                logger.error("Google OAuth Flow not available")
+                raise HTTPException(status_code=500, detail="Google OAuth Flow dependencies are missing")
+            
             # Create flow with the exact same configuration as authorization
             flow = Flow.from_client_config(
                 self.client_config,
@@ -134,7 +165,7 @@ class GmailOAuthService:
                 credentials = flow.credentials
                 logger.info("🔒 OAuth callback - Token exchange successful")
             except Exception as token_error:
-                logger.error("OAuth callback - Token exchange failed")
+                logger.error(f"OAuth callback - Token exchange failed: {token_error}")
                 raise HTTPException(status_code=400, detail="Invalid authorization code")
             
             # Get user info from Google
@@ -234,6 +265,10 @@ class GmailOAuthService:
         Returns:
             Tuple of (gmail_service, updated_credentials)
         """
+        if not GOOGLE_APIS_AVAILABLE:
+            logger.error("Google API dependencies are not available")
+            raise ValueError("Google API dependencies are missing")
+        
         try:
             # Decrypt token
             token_data = token_encryption.decrypt_token(encrypted_token)
@@ -244,20 +279,28 @@ class GmailOAuthService:
             credentials = self.dict_to_credentials(token_data)
             
             # Refresh if expired
-            if credentials.expired and credentials.refresh_token:
-                credentials.refresh(Request())
+            if hasattr(credentials, 'expired') and credentials.expired and hasattr(credentials, 'refresh_token') and credentials.refresh_token:
+                if Request:
+                    credentials.refresh(Request())
             
             # Create Gmail service
-            service = build('gmail', 'v1', credentials=credentials)
+            if build:
+                service = build('gmail', 'v1', credentials=credentials)
+            else:
+                raise ValueError("Google API build function not available")
             
             return service, credentials
             
         except Exception as e:
-            logger.error("Failed to create Gmail service from encrypted token")
+            logger.error(f"Failed to create Gmail service from encrypted token: {e}")
             raise ValueError("Invalid or expired token")
     
     def _get_user_info(self, credentials) -> Dict[str, Any]:
         """Get user information from Google"""
+        if not GOOGLE_APIS_AVAILABLE or not build:
+            logger.error("Google API build function not available")
+            raise HTTPException(status_code=500, detail="Google API dependencies are missing")
+        
         try:
             service = build('oauth2', 'v2', credentials=credentials)
             user_info = service.userinfo().get().execute()
@@ -278,21 +321,25 @@ class GmailOAuthService:
             'expiry': credentials.expiry.isoformat() if credentials.expiry else None
         }
     
-    def dict_to_credentials(self, token_dict: Dict[str, Any]) -> Credentials:
-        """Convert dictionary back to credentials object"""
-        credentials = Credentials(
-            token=token_dict.get('token'),
-            refresh_token=token_dict.get('refresh_token'),
-            token_uri=token_dict.get('token_uri'),
-            client_id=token_dict.get('client_id'),
-            client_secret=token_dict.get('client_secret'),
-            scopes=token_dict.get('scopes')
-        )
+    def dict_to_credentials(self, token_dict: Dict[str, Any]) -> Any:
+        """Convert token dictionary to Google OAuth credentials object"""
+        if not GOOGLE_APIS_AVAILABLE or not Credentials:
+            logger.error("Google API credentials not available")
+            raise ValueError("Google API dependencies are missing")
         
-        if token_dict.get('expiry'):
-            credentials.expiry = datetime.fromisoformat(token_dict['expiry'])
-        
-        return credentials
+        try:
+            credentials = Credentials(
+                token=token_dict.get('token'),
+                refresh_token=token_dict.get('refresh_token'),
+                token_uri=token_dict.get('token_uri'),
+                client_id=token_dict.get('client_id'),
+                client_secret=token_dict.get('client_secret'),
+                scopes=token_dict.get('scopes')
+            )
+            return credentials
+        except Exception as e:
+            logger.error(f"Failed to create credentials from token dict: {e}")
+            raise ValueError("Invalid token data")
 
 # Singleton instance
 gmail_oauth_service = GmailOAuthService()

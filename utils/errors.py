@@ -165,6 +165,16 @@ class ServiceUnavailableError(APIError):
             error_code="SERVICE_UNAVAILABLE_ERROR"
         )
 
+class WhatsAppError(APIError):
+    """WhatsApp service specific error"""
+    def __init__(self, message: str = "WhatsApp service error", details: Optional[Dict[str, Any]] = None):
+        super().__init__(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            message=message,
+            details=details,
+            error_code="WHATSAPP_ERROR"
+        )
+
 # Error Handler Decorators
 
 def handle_api_errors(func):

@@ -8,6 +8,7 @@ passlib[bcrypt]
 python-jose[cryptography]
 pydantic[email]
 httpx
+aiohttp
 google-auth
 google-auth-oauthlib
 google-api-python-client

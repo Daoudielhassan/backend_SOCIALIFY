@@ -23,7 +23,7 @@ class Settings:
     DATABASE_URL: str = os.getenv("DATABASE_URL", "postgresql://localhost/socialify")
     
     # JWT Configuration
-    JWT_SECRET: str = os.getenv("JWT_SECRET")
+    JWT_SECRET: str = os.getenv("JWT_SECRET", "")
     JWT_ALGORITHM: str = os.getenv("JWT_ALGORITHM", "HS256")
     JWT_EXPIRE_HOURS: int = int(os.getenv("JWT_EXPIRE_HOURS", "24"))
     
@@ -32,9 +32,20 @@ class Settings:
     GOOGLE_CLIENT_SECRET: str = os.getenv("GOOGLE_CLIENT_SECRET", "")
     GOOGLE_REDIRECT_URI: str = os.getenv("GOOGLE_REDIRECT_URI", "http://localhost:5173/auth/callback")
     
+    # Meta OAuth Configuration for WhatsApp Business
+    META_APP_ID: str = os.getenv("META_APP_ID", "")
+    META_APP_SECRET: str = os.getenv("META_APP_SECRET", "")
+    META_REDIRECT_URI: str = os.getenv("META_REDIRECT_URI", "https://cd81af9c9e2b.ngrok-free.app/api/whatsapp/v2/oauth/callback")
+    
+    # Frontend Configuration
+    FRONTEND_URL: str = os.getenv("FRONTEND_URL", "http://localhost:5173")
+    
     # External Services
     AI_ENGINE_URL: str = os.getenv("IA_ENGINE_URL", "")
     WHATSAPP_API_URL: str = os.getenv("WHATSAPP_API_URL", "")
+    WHATSAPP_ACCESS_TOKEN: str = os.getenv("WHATSAPP_ACCESS_TOKEN", "")
+    WHATSAPP_PHONE_NUMBER_ID: str = os.getenv("WHATSAPP_PHONE_NUMBER_ID", "")
+    WHATSAPP_WEBHOOK_VERIFY_TOKEN: str = os.getenv("WHATSAPP_WEBHOOK_VERIFY_TOKEN", "")
     
     # Application Configuration
     ALLOWED_ORIGINS: str = os.getenv("ALLOWED_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173,http://localhost:3000,http://127.0.0.1:3000")
@@ -43,6 +54,7 @@ class Settings:
     # Privacy & Security
     ENCRYPTION_KEY: str = os.getenv("ENCRYPTION_KEY", "")
     DATA_RETENTION_DAYS: int = int(os.getenv("DATA_RETENTION_DAYS", "90"))
+    PASSWORD_SALT: str = os.getenv("PASSWORD_SALT", "default_salt")
     
     # Feature Flags
     ENABLE_GMAIL: bool = os.getenv("ENABLE_GMAIL", "true").lower() == "true"
@@ -79,6 +91,15 @@ class Settings:
     def get_allowed_origins_list(cls) -> list[str]:
         """Get CORS allowed origins as a list"""
         return [origin.strip() for origin in cls.ALLOWED_ORIGINS.split(",") if origin.strip()]
+    
+    @classmethod
+    def get_meta_oauth_config(cls) -> Dict[str, str]:
+        """Get Meta OAuth configuration as a dictionary"""
+        return {
+            "app_id": cls.META_APP_ID,
+            "app_secret": cls.META_APP_SECRET,
+            "redirect_uri": cls.META_REDIRECT_URI
+        }
     
     @classmethod
     def get_google_oauth_config(cls) -> Dict[str, str]:

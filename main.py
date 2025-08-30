@@ -1,4 +1,6 @@
 import defusedxml
+
+from api.v2 import whatsapp
 defusedxml.defuse_stdlib()
 
 from defusedxml.xmlrpc import monkey_patch
@@ -44,10 +46,27 @@ app.add_middleware(
 
 # Import routers after app creation to avoid circular imports
 from api.routes import auth, test
+# Legacy routes (kept for backward compatibility)
+# from api.routes import whatsapp, whatsapp_v2
+# TODO: Fix multi_tenant_whatsapp import issues
+# from api.routes import multi_tenant_whatsapp
 
 # Include legacy routers (will be deprecated)
 app.include_router(auth.router, prefix="/auth", tags=["auth"])
 app.include_router(test.router, prefix="/test", tags=["test"])
+
+# Include Unified WhatsApp API (V1 + V2 compatibility)
+app.include_router(whatsapp.router, prefix="/api/whatsapp", tags=["whatsapp-unified"])
+
+# Legacy WhatsApp routes (commented out - replaced by unified API)
+# app.include_router(whatsapp.router, prefix="/api/v1/whatsapp", tags=["v1-whatsapp"])
+
+# Include Multi-Tenant WhatsApp routes (v2 - NEW)
+# TODO: Fix and uncomment once multi_tenant_whatsapp issues are resolved
+# app.include_router(multi_tenant_whatsapp.router, prefix="/api/v2/whatsapp", tags=["v2-whatsapp-multi-tenant"])
+
+# Include WhatsApp V2 routes (v2 - Enhanced multi-tenant with Meta OAuth)
+# app.include_router(whatsapp_v2.router, prefix="/api/v2/whatsapp", tags=["v2-whatsapp-enhanced"])
 
 # Include new v1 API routers (PRIMARY - Use these)
 from api.v1 import gmail, messages, prediction, user, analytics

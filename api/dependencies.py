@@ -4,7 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from jose import JWTError, jwt
 from typing import AsyncGenerator, Optional
-from db.db import SessionLocal
+from db.db import SessionLocal, get_async_session
 from db.schemas import TokenData
 from db.models import User
 import os
@@ -14,17 +14,15 @@ from config.settings import settings
 load_dotenv()
 
 SECRET_KEY = settings.JWT_SECRET
-ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
+ALGORITHM = settings.JWT_ALGORITHM
 
 # Keep OAuth2PasswordBearer for backwards compatibility, but make it optional
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login", auto_error=False)
 
-async def get_db() -> AsyncGenerator[AsyncSession, None]:
-    async with SessionLocal() as session:
-        try:
-            yield session
-        finally:
-            await session.close()
+# Use the async session from db.db
+async def get_db():
+    async for session in get_async_session():
+        yield session
 
 async def get_current_user(
     request: Request,

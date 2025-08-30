@@ -12,6 +12,7 @@ from dotenv import load_dotenv
 import json
 from typing import Dict, Any, Optional
 from utils.logger import logger
+from config.settings import settings
 
 load_dotenv()
 
@@ -26,7 +27,7 @@ class TokenEncryption:
     def _get_or_create_key(self) -> bytes:
         """Get encryption key from environment or derive from secret"""
         # Use JWT secret as base for encryption key derivation
-        jwt_secret = os.getenv("JWT_SECRET")
+        jwt_secret = settings.JWT_SECRET
         if not jwt_secret:
             raise ValueError("JWT_SECRET must be set for token encryption")
         

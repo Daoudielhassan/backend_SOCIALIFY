@@ -14,6 +14,7 @@ import httpx
 import hashlib
 from dotenv import load_dotenv
 from utils.logger import logger
+from config.settings import settings
 
 # Gmail OAuth imports - Import lazily to avoid circular dependencies
 #         from services.email_services.gmail_oauth import gmail_oauth_service
@@ -35,20 +36,20 @@ async def get_auth_config():
     }
 load_dotenv()
 
-_secret_key = os.getenv("JWT_SECRET")
-if not _secret_key:
+# Configuration using centralized settings
+SECRET_KEY: str = settings.JWT_SECRET
+if not SECRET_KEY:
     raise ValueError("JWT_SECRET environment variable is required")
-SECRET_KEY: str = _secret_key
-ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
-ACCESS_TOKEN_EXPIRE_HOURS = int(os.getenv("JWT_EXPIRE_HOURS", 24))
-GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
-PASSWORD_SALT = os.getenv("PASSWORD_SALT", "default_salt")
 
-# Cookie configuration
-COOKIE_SECURE = os.getenv("COOKIE_SECURE", "false").lower() == "true"  # HTTPS only in production, false for local dev
-_samesite_value = os.getenv("COOKIE_SAMESITE", "lax")  # lax, strict, or none
-COOKIE_SAMESITE: Literal["lax", "strict", "none"] = "lax" if _samesite_value not in ["lax", "strict", "none"] else _samesite_value  # type: ignore
-COOKIE_DOMAIN = os.getenv("COOKIE_DOMAIN", None)  # None for same-origin
+ALGORITHM = settings.JWT_ALGORITHM
+ACCESS_TOKEN_EXPIRE_HOURS = settings.JWT_EXPIRE_HOURS
+GOOGLE_CLIENT_ID = settings.GOOGLE_CLIENT_ID
+PASSWORD_SALT = settings.PASSWORD_SALT
+
+# Cookie configuration (add these to settings.py if needed frequently)
+COOKIE_SECURE = False  # Set to True in production with HTTPS
+COOKIE_SAMESITE: Literal["lax", "strict", "none"] = "lax"
+COOKIE_DOMAIN = None  # None for same-origin
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
@@ -345,13 +346,13 @@ async def gmail_oauth_callback(
     if error:
         logger.error(f"OAuth error received: {error}")
         # Redirect to frontend with error
-        frontend_url = os.getenv("FRONTEND_URL", "http://localhost:5173")
+        frontend_url = settings.FRONTEND_URL
         return RedirectResponse(url=f"{frontend_url}/login?error={error}")
     
     if not code:
         logger.error("Missing authorization code in callback")
         # Redirect to frontend with error
-        frontend_url = os.getenv("FRONTEND_URL", "http://localhost:5173")
+        frontend_url = settings.FRONTEND_URL
         return RedirectResponse(url=f"{frontend_url}/login?error=missing_code")
     
     logger.info(f"🔐 Processing OAuth callback with code: {code[:20]}...")
@@ -367,7 +368,7 @@ async def gmail_oauth_callback(
         access_token = create_access_token({"sub": str(result["user_id"]), "email": result["email"]})
         
         # Redirect to frontend dashboard WITHOUT user data in URL
-        frontend_url = os.getenv("FRONTEND_URL", "http://localhost:5173")
+        frontend_url = settings.FRONTEND_URL
         dashboard_url = f"{frontend_url}/dashboard"
         
         # Create redirect response and set httpOnly cookie
@@ -380,11 +381,11 @@ async def gmail_oauth_callback(
         
     except ImportError as import_error:
         logger.error(f"OAuth service import failed: {import_error}")
-        frontend_url = os.getenv("FRONTEND_URL", "http://localhost:5173")
+        frontend_url = settings.FRONTEND_URL
         return RedirectResponse(url=f"{frontend_url}/login?error=service_unavailable")
     except Exception as e:
         logger.error(f"OAuth callback processing failed: {type(e).__name__}: {str(e)}")
-        frontend_url = os.getenv("FRONTEND_URL", "http://localhost:5173")
+        frontend_url = settings.FRONTEND_URL
         error_msg = "callback_failed"
         return RedirectResponse(url=f"{frontend_url}/login?error={error_msg}")
 

@@ -13,6 +13,7 @@ from db.models import User, MessageMetadata
 from services.emailServices import email_service
 from services.privacy import privacy_service
 from services.analytics import analytics_service
+from config.settings import settings
 from utils.errors import (
     APIError, NotFoundError, ValidationError, ServerError, AuthorizationError, AuthenticationError,
     handle_api_errors
@@ -179,8 +180,7 @@ async def fetch_all_users_gmail(
         Operation status
     """
     # Simple admin key check (in production, use proper admin authentication)
-    import os
-    if admin_key != os.getenv("ADMIN_KEY", "admin123"):
+    if admin_key != settings.ADMIN_KEY:
         raise AuthorizationError("Invalid admin key")
     
     try:
