@@ -35,7 +35,7 @@ class Settings:
     # Meta OAuth Configuration for WhatsApp Business
     META_APP_ID: str = os.getenv("META_APP_ID", "")
     META_APP_SECRET: str = os.getenv("META_APP_SECRET", "")
-    META_REDIRECT_URI: str = os.getenv("META_REDIRECT_URI", "https://cd81af9c9e2b.ngrok-free.app/api/whatsapp/v2/oauth/callback")
+    META_REDIRECT_URI: str = os.getenv("META_REDIRECT_URI", "https://buck-moral-goose.ngrok-free.app/api/whatsapp/v2/oauth/callback")
     
     # Frontend Configuration
     FRONTEND_URL: str = os.getenv("FRONTEND_URL", "http://localhost:5173")

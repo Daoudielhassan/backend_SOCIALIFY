@@ -14,7 +14,7 @@ from fastapi import HTTPException
 from config.settings import get_settings
 from utils.logger import logger
 from utils.encryption import token_encryption
-from db.multi_tenant_models import User, WhatsAppBusinessAccount, TenantConfiguration
+from db.models import User, WhatsAppBusinessAccount, TenantConfiguration
 
 settings = get_settings()
 

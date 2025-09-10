@@ -188,7 +188,6 @@ __pycache__/
 *.pyc
 *.log
 bandit-report.json
-.env.*
 venv/
 .idea/
 

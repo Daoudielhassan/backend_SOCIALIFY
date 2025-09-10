@@ -4,6 +4,7 @@ Filters sensitive data from logs to protect user privacy
 """
 
 import re
+import logging
 from loguru import logger
 import sys
 
@@ -85,4 +86,8 @@ logger.add(
 )
 
 # Log startup message
-logger.info("🔒 Privacy-protected logging initialized - sensitive data will be filtered") 
+logger.info("🔒 Privacy-protected logging initialized - sensitive data will be filtered")
+
+# Disable SQLAlchemy engine logs
+logging.getLogger('sqlalchemy.engine').setLevel(logging.WARNING)
+logging.getLogger('sqlalchemy.engine.Engine').setLevel(logging.WARNING) 

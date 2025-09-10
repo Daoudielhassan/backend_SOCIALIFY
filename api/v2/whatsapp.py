@@ -5,6 +5,8 @@ Combines V1 compatibility with V2 multi-tenant architecture
 
 from fastapi import APIRouter, HTTPException, Query, Body, Depends, Request
 from fastapi.responses import PlainTextResponse, RedirectResponse
+import hmac
+import hashlib
 from typing import Dict, List, Optional, Any, Union
 from pydantic import BaseModel, Field
 from datetime import datetime
@@ -12,7 +14,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, update, func
 
 # Services
-from services.whatsappServices.whatsapp_service import whatsapp_service
 from services.whatsappServices.multi_tenant_whatsapp_service import multi_tenant_whatsapp_service
 from services.analytics.analytics_service import analytics_service
 
@@ -29,7 +30,6 @@ from db.models import (
     WhatsAppBusinessAccount, 
     WhatsAppPhoneNumber, 
     WhatsAppMessageV2,
-    WhatsAppMessage,
     WhatsAppWebhook,
     MessageMetadata
 )
@@ -37,29 +37,142 @@ from db.models import (
 router = APIRouter()
 
 # ============================================================================
+# WEBHOOK VERIFICATION UTILITIES
+# ============================================================================
+
+async def verify_webhook_signature(payload: bytes, signature: str) -> bool:
+    """
+    Verify Meta WhatsApp webhook signature for security
+
+    Args:
+        payload: Raw webhook payload bytes
+        signature: X-Hub-Signature-256 header value
+
+    Returns:
+        True if signature is valid, False otherwise
+    """
+    try:
+        if not signature.startswith("sha256="):
+            logger.error("❌ Invalid signature format - missing sha256= prefix")
+            return False
+
+        expected_signature = signature[7:]  # Remove "sha256=" prefix
+
+        # Use app secret as signing key
+        secret = settings.META_APP_SECRET
+        if not secret:
+            logger.warning("⚠️ META_APP_SECRET not configured - skipping signature verification")
+            return True  # Allow in development
+
+        # Calculate expected signature
+        calculated_signature = hmac.new(
+            secret.encode(),
+            payload,
+            hashlib.sha256
+        ).hexdigest()
+
+        # Use constant-time comparison to prevent timing attacks
+        is_valid = hmac.compare_digest(expected_signature, calculated_signature)
+
+        if is_valid:
+            logger.info("✅ Webhook signature verified successfully")
+        else:
+            logger.error("❌ Webhook signature verification failed")
+            logger.error(f"Expected: {expected_signature}")
+            logger.error(f"Calculated: {calculated_signature}")
+
+        return is_valid
+
+    except Exception as e:
+        logger.error(f"❌ Error verifying webhook signature: {str(e)}")
+        return False
+
+# ============================================================================
 # V1 LEGACY ENDPOINTS (Backward Compatibility)
 # ============================================================================
 
-@router.post("/webhook")
-async def whatsapp_webhook_v1(
+@router.post("/v2/webhook")
+async def whatsapp_webhook_multi_tenant(
     request: Request,
     db: AsyncSession = Depends(get_async_session)
 ):
-    """V1 webhook endpoint for WhatsApp messages"""
+    """
+    V2 Multi-Tenant WhatsApp webhook endpoint for receiving messages
+
+    Handles incoming messages from Meta WhatsApp Business API and routes them
+    to the correct tenant (user) based on phone number association.
+
+    Features:
+    - Webhook signature verification for security
+    - Multi-tenant message routing
+    - Comprehensive error handling and logging
+    - Privacy-focused message processing
+    - AI processing integration (placeholder)
+    """
     try:
-        body = await request.json()
-        logger.info(f"📱 WhatsApp webhook V1 received: {body}")
-        
-        # Verify webhook signature if needed
-        # TODO: Add webhook verification
-        
-        # Process webhook with V1 service
-        result = await whatsapp_service.process_webhook_message(body)
-        return {"status": "success", "processed": result}
-        
+        # Get raw request data for signature verification
+        raw_body = await request.body()
+        signature = request.headers.get("X-Hub-Signature-256", "")
+
+        logger.info("📱 WhatsApp V2 webhook received")
+        logger.info(f"📱 Headers: {dict(request.headers)}")
+        logger.info(f"📱 Content-Length: {len(raw_body) if raw_body else 0}")
+
+        # Parse webhook payload
+        if not raw_body:
+            logger.warning("⚠️ Empty webhook payload received")
+            return {"status": "empty_payload"}
+
+        try:
+            webhook_data = await request.json()
+        except Exception as e:
+            logger.error(f"❌ Failed to parse webhook JSON: {str(e)}")
+            raise HTTPException(status_code=400, detail="Invalid JSON payload")
+
+        logger.info(f"📱 Webhook data keys: {list(webhook_data.keys()) if isinstance(webhook_data, dict) else 'not_dict'}")
+
+        # Verify webhook signature if signature is provided
+        if signature:
+            is_valid = await verify_webhook_signature(raw_body, signature)
+            if not is_valid:
+                logger.warning("❌ Webhook signature verification failed")
+                raise HTTPException(status_code=403, detail="Invalid signature")
+            else:
+                logger.info("✅ Webhook signature verified")
+        else:
+            logger.info("ℹ️ No webhook signature provided - allowing for testing")
+
+        # Process webhook with multi-tenant service
+        result = await multi_tenant_whatsapp_service.route_webhook_message(
+            webhook_data=webhook_data,
+            db=db
+        )
+
+        logger.info(f"✅ Webhook processed successfully: {result}")
+
+        # Return 200 OK to acknowledge receipt
+        return {
+            "status": "success",
+            "processed_count": result.get("processed_count", 0),
+            "timestamp": datetime.utcnow().isoformat()
+        }
+
+    except HTTPException:
+        # Re-raise HTTP exceptions as-is
+        raise
     except Exception as e:
-        logger.error(f"❌ WhatsApp webhook V1 error: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"❌ WhatsApp V2 webhook error: {str(e)}")
+        logger.error(f"❌ Error type: {type(e).__name__}")
+        import traceback
+        logger.error(f"❌ Traceback: {traceback.format_exc()}")
+
+        # Return 500 but don't raise exception to prevent webhook retries
+        # (Meta will retry failed webhooks, so we want to acknowledge receipt even on errors)
+        return {
+            "status": "error",
+            "message": "Internal processing error",
+            "timestamp": datetime.utcnow().isoformat()
+        }
 
 @router.post("/send-message")
 async def send_whatsapp_message_v1(
@@ -79,11 +192,17 @@ async def send_whatsapp_message_v1(
         if not to or not message:
             raise HTTPException(status_code=400, detail="Missing required fields: 'to' and 'message'")
         
-        # Send with V1 service
-        result = await whatsapp_service.send_message(
+        phone_number_id = message_data.get("phone_number_id")
+        if not phone_number_id or not isinstance(phone_number_id, str):
+            raise HTTPException(status_code=400, detail="Missing or invalid 'phone_number_id'")
+
+        # Send with multi-tenant service
+        result = await multi_tenant_whatsapp_service.send_message(
+            user_id=user_id,
+            phone_number_id=phone_number_id,
             to=to,
             message=message,
-            message_type=message_data.get("type", "text")
+            db=db
         )
         
         return {"status": "success", "message_id": result}
@@ -105,9 +224,9 @@ async def get_whatsapp_messages_v1(
         
         # Query V1 messages
         query = (
-            select(WhatsAppMessage)
-            .where(WhatsAppMessage.user_id == user_id)
-            .order_by(WhatsAppMessage.created_at.desc())
+            select(WhatsAppMessageV2)
+            .where(WhatsAppMessageV2.user_id == user_id)
+            .order_by(WhatsAppMessageV2.created_at.desc())
             .limit(limit)
             .offset(offset)
         )
@@ -478,6 +597,96 @@ async def verify_webhook_v2(
     
     except Exception as e:
         logger.error(f"❌ WhatsApp webhook V2 verification error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ============================================================================
+# HEALTH CHECK
+# ============================================================================
+
+@router.post("/v2/webhook/configure")
+async def configure_webhook_v2(
+    webhook_config: dict = Body(...),
+    current_user = Depends(get_current_user),
+    db: AsyncSession = Depends(get_async_session)
+):
+    """
+    Configure webhook for a specific phone number
+    
+    Args:
+        webhook_config: Configuration containing phone_number_id and webhook_url
+        current_user: Authenticated user
+        db: Database session
+        
+    Returns:
+        Configuration result
+    """
+    try:
+        user_id = current_user.id
+        phone_number_id = webhook_config.get("phone_number_id")
+        webhook_url = webhook_config.get("webhook_url")
+        
+        if not phone_number_id or not webhook_url:
+            raise HTTPException(
+                status_code=400, 
+                detail="Missing required fields: phone_number_id and webhook_url"
+            )
+        
+        logger.info(f"🔧 Configuring webhook for user {current_user.email}, phone {phone_number_id}")
+        
+        # Configure webhook
+        result = await multi_tenant_whatsapp_service.configure_webhook(
+            user_id=user_id,
+            phone_number_id=phone_number_id,
+            webhook_url=webhook_url,
+            db=db
+        )
+        
+        return {
+            "status": "success",
+            "message": "Webhook configured successfully",
+            "data": result
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Webhook configuration error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/v2/webhook/status/{phone_number_id}")
+async def get_webhook_status_v2(
+    phone_number_id: str,
+    current_user = Depends(get_current_user),
+    db: AsyncSession = Depends(get_async_session)
+):
+    """
+    Get webhook configuration status for a phone number
+    
+    Args:
+        phone_number_id: Phone number to check
+        current_user: Authenticated user
+        db: Database session
+        
+    Returns:
+        Webhook status information
+    """
+    try:
+        user_id = current_user.id
+        
+        logger.info(f"📊 Checking webhook status for user {current_user.email}, phone {phone_number_id}")
+        
+        # Get webhook status
+        result = await multi_tenant_whatsapp_service.get_webhook_status(
+            user_id=user_id,
+            phone_number_id=phone_number_id,
+            db=db
+        )
+        
+        return {
+            "status": "success",
+            "data": result
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Webhook status check error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 # ============================================================================

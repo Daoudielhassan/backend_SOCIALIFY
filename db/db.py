@@ -14,14 +14,16 @@ DATABASE_URL = settings.DATABASE_URL
 
 engine = create_async_engine(
     DATABASE_URL,
-    echo=settings.DEBUG,  # Use debug setting for SQL echo
+    echo=False,  # Disable SQLAlchemy engine logs
     future=True,
     pool_size=10,
     max_overflow=20,
     pool_pre_ping=True  # Verify connections before use
 )
 
-SessionLocal = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+from sqlalchemy.ext.asyncio import async_sessionmaker
+
+SessionLocal = async_sessionmaker(bind=engine, class_=AsyncSession, expire_on_commit=False)
 Base = declarative_base()
 
 # Function for dependency injection
